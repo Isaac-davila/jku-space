@@ -38,7 +38,7 @@ Intro (30 s) → Hub ─┬─ Ausweichmanöver ─┐
                     ├─ Leck abdichten   │  Reihenfolge: GameState.TASK_ORDER
                     ├─ Abwehrlaser      │  Countdown: 3:30 (GameState.TOTAL_TIME)
                     ├─ Funkverbindung   │  Fehlschlag = −25 % Hülle
-                    └─ Wrack bergen ────┘
+                    └─ Trümmer einfangen┘
              → Ending (abhängig von Hülle / Zeit / ob der Laser-Twist gesehen wurde)
 ```
 
@@ -107,7 +107,7 @@ Die 5 Prototypen in `scenes/minigames/` sind **spielbar, aber hässlich**. Sie s
 | 2 | Minispiel Ausweichmanöver (+ Funk) | `scenes/minigames/dodge/`, `comms/` |
 | 3 | Minispiel Leck | `scenes/minigames/leak/` |
 | 4 | Minispiel Abwehrlaser (Kessler-Twist) | `scenes/minigames/laser/` |
-| 5 | Minispiel Wrack bergen | `scenes/minigames/capture/` |
+| 5 | Minispiel Trümmer einfangen (Netze) | `scenes/minigames/capture/` |
 | 6 | Story, Fakten, Grafik & Sound | `scenes/intro/`, `scenes/ending/`, `data/`, `assets/` |
 
 Wer kein GDScript kann, übernimmt Rolle 6 oder Balancing und Playtests. Dann reichen auch 4 Minispiele.

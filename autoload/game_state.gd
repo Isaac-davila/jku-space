@@ -43,9 +43,9 @@ const TASKS := {
 		"scene": "res://scenes/minigames/comms/comms.tscn",
 	},
 	"capture": {
-		"title": "Wrack bergen",
+		"title": "Trümmer einfangen",
 		"room": "ROBOTIK",
-		"alarm": "Taumelndes Wrack auf Kollisionskurs – Greifarm!",
+		"alarm": "Trümmerschwarm in Reichweite – Netzwerfer bereit!",
 		"scene": "res://scenes/minigames/capture/capture.tscn",
 	},
 }

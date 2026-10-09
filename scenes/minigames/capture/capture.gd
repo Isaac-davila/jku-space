@@ -1,87 +1,196 @@
 extends Minigame
-## WRACK BERGEN – Ein taumelnder toter Satellit. Zugreifen, wenn der gelbe
-## Haltegriff oben beim Greifarm ist. 3 Griffe = stabilisiert.
-## Echter Hintergrund: Missionen wie ClearSpace-1 / RemoveDEBRIS. Owner: Rolle 5
+## TRÜMMER EINFANGEN – Netze auf Trümmergruppen werfen. Je mehr Teile ein Netz
+## gleichzeitig fängt, desto mehr Punkte (Multiplikator). Ziel: 100 Punkte.
+## Echter Hintergrund: RemoveDEBRIS hat 2018 ein Netz im All getestet. Owner: Rolle 5
 
-const CENTER := Vector2(640, 430)
-const CLAW_TOP := Vector2(640, 90)
-const GRAB_WINDOW := 0.28   # rad Toleranz
-const NEED := 3
-const MAX_MISS := 3
+const LAUNCHER := Vector2(640, 610)
+const NET_SPEED := 1100.0
+const NET_RADIUS := 85.0
+const OPEN_TIME := 0.3       # Sekunden, bis das Netz ganz offen ist
+const PULL_TIME := 0.45      # Sekunden, in denen das Netz zuzieht
+const GOAL := 100
+const NETS := 8
+const POINTS_PER_PIECE := 10 # Punkte = 10 × Anzahl × Anzahl → 10 / 40 / 90 / 160
+const MIN_PIECES := 9
 
-var angle := 0.0
-var ang_vel := 2.4
-var grabs := 0
-var misses := 0
-var claw_t := 0.0
-var feedback := ""
-var feedback_col := Pal.TEXT
-var feedback_t := 0.0
+var pieces: Array[Dictionary] = []
+var net: Dictionary = {}     # leer = kein Netz unterwegs
+var nets_left := NETS
+var score := 0
+var popups: Array[Dictionary] = []
 
 
 func _init() -> void:
-	title = "Wrack bergen"
-	instructions = "Leertaste oder Tippen, wenn der gelbe Griff OBEN ist"
-	time_limit = 22.0
+	title = "Trümmer einfangen"
+	instructions = "Tippe, wohin das Netz fliegt – mehrere Teile auf einmal = Bonus!"
+	time_limit = 30.0
+
+
+func start() -> void:
+	for i in 4:
+		_spawn_cluster(Vector2(randf_range(180, 1100), randf_range(160, 460)))
+
+
+## Erzeugt eine Gruppe aus 2–4 Teilen, die gemeinsam treiben.
+func _spawn_cluster(center: Vector2) -> void:
+	var drift := Vector2(randf_range(-70, 70), randf_range(-20, 20))
+	for k in randi_range(2, 4):
+		pieces.append({
+			"pos": center + Vector2(randf_range(-55, 55), randf_range(-40, 40)),
+			"vel": drift + Vector2(randf_range(-12, 12), randf_range(-12, 12)),
+			"r": randf_range(10, 20),
+			"rot": randf() * TAU,
+			"spin": randf_range(-3, 3),
+			"seed": randf() * 10.0,
+		})
 
 
 func tick(delta: float) -> void:
-	var wobble := 1.0 + 0.35 * sin(elapsed * 1.7)
-	angle = wrapf(angle + ang_vel * wobble * delta, -PI, PI)
-	claw_t = maxf(claw_t - delta, 0.0)
-	feedback_t = maxf(feedback_t - delta, 0.0)
+	for p in pieces:
+		p.pos += p.vel * delta
+		p.rot += p.spin * delta
+		if p.pos.x < -40:
+			p.pos.x = VIEW.x + 40
+		elif p.pos.x > VIEW.x + 40:
+			p.pos.x = -40
+		if p.pos.y < 120 or p.pos.y > 520:
+			p.vel.y = -p.vel.y
+			p.pos.y = clampf(p.pos.y, 120, 520)
+
+	if pieces.size() < MIN_PIECES:
+		var side := -60.0 if randf() < 0.5 else VIEW.x + 60.0
+		_spawn_cluster(Vector2(side, randf_range(160, 460)))
+
+	for pop in popups:
+		pop.t -= delta
+		pop.pos.y -= 40.0 * delta
+	popups = popups.filter(func(pop): return pop.t > 0.0)
+
+	if not net.is_empty():
+		_update_net(delta)
+
+
+func _update_net(delta: float) -> void:
+	if net.state == "fly":
+		net.pos = net.pos.move_toward(net.target, NET_SPEED * delta)
+		if net.pos.distance_to(net.target) < 1.0:
+			net.state = "open"
+			net.t = 0.0
+			_catch()
+	else:
+		net.t += delta
+		var pull: float = clampf((net.t - OPEN_TIME) / PULL_TIME, 0.0, 1.0)
+		for c in net.caught:
+			c.pos = c.pos.lerp(net.pos, pull)
+		if net.t >= OPEN_TIME + PULL_TIME:
+			net = {}
+			_check_end()
+
+
+## Alles im Netzradius wird gefangen und gewertet.
+func _catch() -> void:
+	var caught: Array = []
+	for i in range(pieces.size() - 1, -1, -1):
+		if pieces[i].pos.distance_to(net.pos) < NET_RADIUS + pieces[i].r * 0.5:
+			caught.append(pieces[i])
+			pieces.remove_at(i)
+	net.caught = caught
+	var n := caught.size()
+	var pts := POINTS_PER_PIECE * n * n
+	score += pts
+	var text := "Daneben!"
+	var col := Pal.DIM
+	if n == 1:
+		text = "+%d" % pts
+		col = Pal.TEXT
+	elif n >= 2:
+		text = "%der-Fang!  +%d" % [n, pts]
+		col = Pal.WARN if n == 2 else Pal.OK
+	popups.append({"pos": net.pos + Vector2(-60, -NET_RADIUS - 10), "text": text, "col": col, "t": 1.2})
+
+
+func _check_end() -> void:
+	if score >= GOAL:
+		finish(true, "ORBIT AUFGERÄUMT!")
+	elif nets_left <= 0:
+		finish(false, "KEINE NETZE MEHR")
+
+
+func on_timeout() -> void:
+	if score >= GOAL:
+		finish(true, "ORBIT AUFGERÄUMT!")
+	else:
+		finish(false, "ZEIT ABGELAUFEN")
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if done:
-		return
-	if not (is_click(event) or event.is_action_pressed("interact")):
-		return
-	if claw_t > 0.0:
-		return
-	claw_t = 0.45
-	# Griff sitzt lokal bei Winkel 0 → zeigt nach oben, wenn angle == -PI/2
-	var diff := absf(wrapf(angle + PI / 2.0, -PI, PI))
-	if diff < GRAB_WINDOW:
-		grabs += 1
-		ang_vel *= 0.65
-		_feedback("GEGRIFFEN!", Pal.OK)
-		if grabs >= NEED:
-			finish(true, "WRACK STABILISIERT")
-	else:
-		misses += 1
-		ang_vel *= 1.2
-		_feedback("Daneben – es taumelt stärker!", Pal.ALERT)
-		if misses >= MAX_MISS:
-			finish(false, "WRACK ENTGLITTEN")
+	if is_click(event):
+		throw_at(get_global_mouse_position())
 
 
-func _feedback(text: String, col: Color) -> void:
-	feedback = text
-	feedback_col = col
-	feedback_t = 1.0
+## Wirft ein Netz Richtung p (nur eins gleichzeitig).
+func throw_at(p: Vector2) -> void:
+	if done or not net.is_empty() or nets_left <= 0:
+		return
+	nets_left -= 1
+	net = {"pos": LAUNCHER, "target": Vector2(p.x, minf(p.y, 540.0)), "state": "fly", "t": 0.0, "caught": []}
 
+
+# --- Zeichnen ----------------------------------------------------------------
 
 func _draw() -> void:
 	draw_stars()
-	# Greifarm
-	var ext := sin(clampf(claw_t / 0.45, 0.0, 1.0) * PI) * 120.0
-	var claw_end := CLAW_TOP + Vector2(0, 90 + ext)
-	draw_line(CLAW_TOP, claw_end, Pal.HULL, 10.0)
-	draw_line(claw_end, claw_end + Vector2(-22, 26), Pal.HULL, 6.0)
-	draw_line(claw_end, claw_end + Vector2(22, 26), Pal.HULL, 6.0)
-	# Zielzone
-	draw_arc(CENTER, 150, -PI / 2.0 - GRAB_WINDOW, -PI / 2.0 + GRAB_WINDOW, 16, Color(Pal.OK, 0.5), 8.0)
-	# Wrack
-	draw_set_transform(CENTER, angle, Vector2.ONE)
-	draw_rect(Rect2(-60, -45, 120, 90), Color("6b6f7a"))
-	draw_rect(Rect2(-60, -45, 120, 90), Pal.DIM, false, 3.0)
-	draw_rect(Rect2(-190, -28, 125, 56), Color("2b4a8c"))
-	draw_rect(Rect2(65, -28, 70, 56), Color("2b4a8c"))           # abgebrochenes Panel
-	draw_line(Vector2(135, -28), Vector2(150, 10), Color("2b4a8c"), 6.0)
-	draw_circle(Vector2(150, 0), 14, Pal.WARN)                    # Haltegriff (lokal Winkel 0)
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	draw_text(Vector2(32, 100), "Griffe: %d / %d" % [grabs, NEED], 24, Pal.OK)
-	draw_text(Vector2(32, 132), "Fehlgriffe: %d / %d" % [misses, MAX_MISS], 20, Pal.ALERT if misses > 0 else Pal.DIM)
-	if feedback_t > 0.0:
-		draw_text(Vector2(820, 300), feedback, 26, Color(feedback_col, feedback_t))
+	for p in pieces:
+		draw_debris(p.pos, p.r, p.rot, Pal.DEBRIS, p.seed)
+
+	# Werfer zeigt Richtung Maus
+	var aim := (get_global_mouse_position() - LAUNCHER).normalized()
+	if aim.y > -0.2:
+		aim = Vector2(aim.x, -0.2).normalized()
+	draw_line(LAUNCHER, LAUNCHER + aim * 60.0, Pal.HULL, 14.0)
+	draw_circle(LAUNCHER, 34, Pal.PANEL)
+	draw_circle(LAUNCHER, 24, Pal.HULL)
+
+	if not net.is_empty():
+		_draw_net()
+
+	for pop in popups:
+		draw_text(pop.pos, pop.text, 30, Color(pop.col, clampf(pop.t * 2.0, 0.0, 1.0)))
+
+	# Punkte-Balken
+	var bar := Rect2(32, 90, 360, 20)
+	draw_rect(bar, Pal.PANEL)
+	draw_rect(Rect2(bar.position, Vector2(bar.size.x * minf(float(score) / GOAL, 1.0), bar.size.y)), Pal.OK)
+	draw_rect(bar, Pal.LINE, false, 2.0)
+	draw_text(Vector2(408, 108), "%d / %d Punkte" % [score, GOAL], 22, Pal.TEXT)
+	draw_text(Vector2(32, 146), "1 Teil = 10   ·   2 = 40   ·   3 = 90   ·   4 = 160", 18, Pal.DIM)
+
+	# Verbleibende Netze
+	draw_text(Vector2(900, 108), "Netze:", 22, Pal.DIM)
+	for i in NETS:
+		var c := Pal.ACCENT if i < nets_left else Pal.LINE
+		draw_circle(Vector2(985 + i * 26, 101), 9, c)
+
+
+func _draw_net() -> void:
+	var p: Vector2 = net.pos
+	draw_line(LAUNCHER, p, Color(Pal.HULL, 0.6), 2.0)   # Seil
+	if net.state == "fly":
+		draw_circle(p, 12, Pal.ACCENT)
+		return
+	var open: float = clampf(net.t / OPEN_TIME, 0.0, 1.0)
+	var close: float = clampf((net.t - OPEN_TIME) / PULL_TIME, 0.0, 1.0)
+	var r: float = NET_RADIUS * ease(open, 0.4) * (1.0 - 0.7 * close)
+	if r < 2.0:
+		return
+	var col := Color(Pal.ACCENT, 0.8)
+	draw_arc(p, r, 0, TAU, 32, col, 3.0)
+	var step := 16.0
+	var o := -r + step
+	while o < r:
+		var half := sqrt(r * r - o * o)
+		draw_line(p + Vector2(-half, o), p + Vector2(half, o), Color(col, 0.5), 1.5)
+		draw_line(p + Vector2(o, -half), p + Vector2(o, half), Color(col, 0.5), 1.5)
+		o += step
+	for c in net.caught:
+		draw_debris(c.pos, c.r * (1.0 - 0.5 * close), c.rot, Pal.DEBRIS, c.seed)

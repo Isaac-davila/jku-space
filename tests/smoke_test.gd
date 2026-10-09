@@ -50,6 +50,7 @@ func _run() -> void:
 		print("OK  ", path)
 
 	await _test_laser_lesson()
+	await _test_capture_combo()
 	await _test_full_run()
 
 	if failures.is_empty():
@@ -102,6 +103,24 @@ func _test_laser_lesson() -> void:
 	_check(gs.flags.get("kessler_seen", false), "Laser: Flag kessler_seen nicht gesetzt")
 	print("OK  Laser-Lektion (%d Teile nach %d Schüssen)" % [mg.pieces.size(), mg.shots])
 	mg.queue_free()
+
+
+## Prüft das Netz: 3 Teile auf einmal fangen = 90 Punkte.
+func _test_capture_combo() -> void:
+	var mg = load("res://scenes/minigames/capture/capture.tscn").instantiate()
+	root.add_child(mg)
+	await process_frame
+	mg.pieces.clear()
+	for k in 3:
+		mg.pieces.append({"pos": Vector2(600 + k * 30, 300), "vel": Vector2.ZERO, "r": 12.0,
+			"rot": 0.0, "spin": 0.0, "seed": 0.0})
+	mg.throw_at(Vector2(630, 300))
+	await create_timer(0.6).timeout
+	_check(mg.score == 90, "Netz: 3er-Fang sollte 90 Punkte geben, war %d" % mg.score)
+	_check(mg.nets_left == mg.NETS - 1, "Netz: Netzzähler falsch")
+	print("OK  Netz-Kombo (%d Punkte)" % mg.score)
+	mg.queue_free()
+	await process_frame
 
 
 ## Spielt einen kompletten Durchlauf: Hub → alle Minispiele → Ending.

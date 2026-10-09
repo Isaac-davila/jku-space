@@ -16,7 +16,7 @@ Am Ende bleibt die Nachricht unbeantwortet.
 | 1:10 | Leck abdichten | Hektik | Kleine Teile, großer Schaden |
 | 1:45 | Abwehrlaser | Spaß → Erschrecken | **Twist:** Abschießen = mehr Müll (Kessler) |
 | 2:30 | Funkverbindung | Sorge um die Erde | GPS, Wetter, Notruf hängen am Orbit |
-| 3:10 | Wrack bergen | Konzentration | Aufräumen ist mühsam, aber möglich |
+| 3:10 | Trümmer einfangen (Netzwerfer, 100 Punkte, Kombo-Bonus) | Ehrgeiz | Aufräumen geht – aber nur mit begrenzten Mitteln |
 | 3:50 | Ende: Kapsel getroffen, Nachricht unbeantwortet | Stille, Traurigkeit | – |
 | 4:20 | „Aurora gibt es nicht. Den Müll schon.“ + Fakten | Erkenntnis | echte Zahlen |
 | 4:50 | Call to Action | Handlungsimpuls | ??? (Team entscheidet) |
