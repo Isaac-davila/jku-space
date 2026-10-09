@@ -1,0 +1,33 @@
+; Engine configuration file.
+; Godot 4.5 – bitte alle exakt dieselbe Version verwenden (siehe README).
+
+config_version=5
+
+[application]
+
+config/name="Kaskade"
+config/description="Ein 5-Minuten-Spiel über Weltraummüll."
+run/main_scene="res://scenes/intro/intro.tscn"
+config/features=PackedStringArray("4.5", "GL Compatibility")
+
+[autoload]
+
+GameState="*res://autoload/game_state.gd"
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/stretch/mode="canvas_items"
+window/stretch/aspect="keep"
+window/handheld/orientation=0
+
+[input_devices]
+
+pointing/emulate_mouse_from_touch=true
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+environment/defaults/default_clear_color=Color(0.027, 0.043, 0.086, 1)

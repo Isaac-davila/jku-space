@@ -1,0 +1,15 @@
+# Godot 4 – Cache und Importe werden lokal erzeugt, NIE committen
+.godot/
+/android/
+
+# Exporte
+/build/
+*.pck
+*.zip
+
+# Editor/OS
+.DS_Store
+Thumbs.db
+*.tmp
+.vscode/
+.idea/

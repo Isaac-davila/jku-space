@@ -1,0 +1,12 @@
+# Einheitliche Zeilenenden – verhindert Schein-Änderungen zwischen Windows/Mac/Linux
+* text=auto eol=lf
+
+# Binärdateien nie mergen
+*.png binary
+*.jpg binary
+*.webp binary
+*.ogg binary
+*.wav binary
+*.mp3 binary
+*.ttf binary
+*.otf binary
