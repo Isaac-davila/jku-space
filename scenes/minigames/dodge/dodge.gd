@@ -31,6 +31,7 @@ var invuln := 0.0
 var broken := false
 var broken_t := 0.0
 var earth := Earth.new()          # Erde im Hintergrund (core/earth.gd)
+var thrust := 0.0                 # -1 = Schub nach oben, +1 = nach unten (für die Düsen-Animation)
 
 
 func _init() -> void:
@@ -50,6 +51,7 @@ func tick(delta: float) -> void:
 	var input := Input.get_axis("move_up", "move_down")
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		input = clampf((get_global_mouse_position().y - ship_y) / 80.0, -1.0, 1.0)
+	thrust = input
 	vel += input * 1700.0 * delta
 	vel -= vel * 2.2 * delta
 	ship_y += vel * delta
@@ -124,6 +126,7 @@ func _break_apart() -> void:
 	_throw_off("strut", Vector2(42, 0), 2.0)           # Gitterträger rechts
 	_throw_off("tank", Vector2(0, -14), 1.0)           # Module
 	_throw_off("tank", Vector2(0, 14), 1.0)
+	_throw_off("tank", Vector2(0, 34), 0.7)             # angedockter Progress-Frachter
 	_throw_off("strut", Vector2(-28, -10), 0.7)        # Radiatoren
 	_throw_off("strut", Vector2(28, 10), 0.7)
 
@@ -193,6 +196,8 @@ func _draw_station(p: Vector2) -> void:
 		draw_line(Vector2(-8, y), Vector2(8, y), C_MODULE_LINE, 1.0)
 	draw_circle(Vector2(0, 0), 4, Pal.ACCENT)
 
+	_draw_progress_and_thrusters()
+
 	# Schaden
 	if hits >= 1:
 		draw_circle(Vector2(5, -17), 4, Color(C_SCORCH, 0.8))
@@ -205,3 +210,26 @@ func _draw_station(p: Vector2) -> void:
 			draw_circle(Vector2(-4 - t * 30, 22 + t * 18), 2.5 * (1.0 - t), Color(1, 1, 1, 0.6 * (1.0 - t)))
 
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## Angedockter Progress-Frachter unten an den Modulen. Wie bei der echten ISS
+## übernehmen seine Triebwerke das Ausweichmanöver (Bahnanhebung).
+## Hochfliegen = Haupttriebwerk am Frachter, Runterfliegen = kleine Lagedüsen oben.
+func _draw_progress_and_thrusters() -> void:
+	# Frachter
+	draw_rect(Rect2(-6, 24, 12, 16), Color("9aa58a"))
+	draw_rect(Rect2(-17, 29, 9, 6), Color("1d2f5e"))
+	draw_rect(Rect2(8, 29, 9, 6), Color("1d2f5e"))
+	draw_colored_polygon(PackedVector2Array([Vector2(-4, 40), Vector2(4, 40), Vector2(6, 45), Vector2(-6, 45)]), Color("5c6370"))
+
+	var flicker := 0.8 + 0.2 * sin(elapsed * 60.0)
+	if thrust < -0.05 and not broken:
+		# Haupttriebwerk: Flamme nach unten → Station steigt
+		var length := (14.0 + 26.0 * -thrust) * flicker
+		draw_colored_polygon(PackedVector2Array([Vector2(-5, 45), Vector2(5, 45), Vector2(0, 45 + length)]), Color(1.0, 0.55, 0.15, 0.85))
+		draw_colored_polygon(PackedVector2Array([Vector2(-2.5, 45), Vector2(2.5, 45), Vector2(0, 45 + length * 0.55)]), Color(1.0, 0.95, 0.7, 0.95))
+	elif thrust > 0.05 and not broken:
+		# Lagedüsen oben: kurze Gas-Stöße → Station sinkt
+		var length := (6.0 + 10.0 * thrust) * flicker
+		for x in [-6.0, 6.0]:
+			draw_colored_polygon(PackedVector2Array([Vector2(x - 2.5, -24), Vector2(x + 2.5, -24), Vector2(x, -24 - length)]), Color(0.85, 0.92, 1.0, 0.8))
