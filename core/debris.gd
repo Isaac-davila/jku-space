@@ -24,6 +24,7 @@ const LEVEL := {
 	"shard": 2,
 	"iss_panel": 1,
 	"sat": 0,
+	"sat_wing": 1, "sat_body": 1, "sat_dish": 1,
 }
 const BASE_R := {
 	"panel": 42.0, "stage": 36.0, "vanguard": 28.0,
@@ -31,12 +32,18 @@ const BASE_R := {
 	"shard": 6.0,
 	"iss_panel": 16.0,
 	"sat": 26.0,
+	"sat_wing": 13.0, "sat_body": 11.0, "sat_dish": 9.0,
 }
 const SPLITS := {
 	"panel": ["panel_half", "panel_half", "strut"],
 	"stage": ["nozzle", "tank", "strut"],
 	"vanguard": ["shell", "shell", "antenna"],
-	"sat": ["panel_half", "panel_half", "tank", "antenna"],
+	"sat": ["sat_wing", "sat_wing", "sat_body", "sat_dish"],
+}
+## Optional: wo die Bruchstücke am Original saßen (lokale Koordinaten, gleiche Reihenfolge wie SPLITS).
+## So brechen sie genau dort ab, wo sie hingehören, und fliegen von dort weg.
+const SPLIT_OFFSETS := {
+	"sat": [Vector2(-26, 0), Vector2(26, 0), Vector2(0, 0), Vector2(0, -16)],
 }
 const SMALL_PARTS := ["panel_half", "strut", "nozzle", "tank", "shell", "antenna"]
 const VANGUARD_CHANCE := 0.1
@@ -92,10 +99,20 @@ static func split(p: Dictionary) -> Array[Dictionary]:
 	var kinds: Array = SPLITS.get(p.kind, ["shard", "shard", "shard"])
 	var n := kinds.size()
 	var offset := randf() * TAU
+	var placed: Array = SPLIT_OFFSETS.get(p.kind, [])
 	for i in n:
 		var dir := Vector2.from_angle(offset + TAU * i / n + randf_range(-0.3, 0.3))
-		var child := make(kinds[i], p.pos + dir * p.r * 0.35, p.vel + dir * randf_range(70, 160), p.scale)
-		child.spin = randf_range(-5, 5)
+		var pos: Vector2 = p.pos + dir * p.r * 0.35
+		var rot := randf() * TAU
+		if i < placed.size():
+			var local: Vector2 = placed[i] * p.scale
+			pos = p.pos + local.rotated(p.rot)
+			rot = p.rot
+			if local.length() > 0.1:
+				dir = local.rotated(p.rot).normalized()
+		var child := make(kinds[i], pos, p.vel + dir * randf_range(70, 160), p.scale)
+		child.rot = rot
+		child.spin = randf_range(-5, 5) if i >= placed.size() else randf_range(-1.5, 1.5)
 		out.append(child)
 	return out
 
@@ -117,6 +134,9 @@ static func draw(ci: CanvasItem, p: Dictionary) -> void:
 		"shard": _draw_shard(ci)
 		"iss_panel": _draw_iss_panel(ci)
 		"sat": _draw_sat(ci)
+		"sat_wing": _draw_sat_wing(ci)
+		"sat_body": _draw_sat_body(ci)
+		"sat_dish": _draw_sat_dish(ci)
 	ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	if p.kind == "vanguard" and p.scale >= 0.9:
 		ci.draw_string(ThemeDB.fallback_font, p.pos + Vector2(-62, -38), "Vanguard 1 · seit 1958",
@@ -239,6 +259,35 @@ static func _draw_sat(ci: CanvasItem) -> void:
 	var dish := PackedVector2Array()
 	for i in 9:
 		dish.append(Vector2(0, -16) + Vector2.from_angle(PI + PI * i / 8.0) * 7.0)
+	ci.draw_colored_polygon(dish, C_SILVER)
+
+
+# Bruchstücke des Wettersatelliten – passen genau zu _draw_sat()
+
+## abgerissener Solarflügel mit Stück vom Ausleger
+static func _draw_sat_wing(ci: CanvasItem) -> void:
+	ci.draw_line(Vector2(-12, 0), Vector2(-16, 1), C_STRUT, 2.0)
+	_rect(ci, -12, -7, 24, 14, C_FRAME)
+	for k in 3:
+		_rect(ci, -11 + k * 7.7, -6, 6.7, 12, C_CELL)
+	ci.draw_line(Vector2(-9, 5), Vector2(-3, -5), Color(C_CELL_HI, 0.5), 1.0)
+
+
+## goldfolierter Satellitenkörper mit aufgerissener Seite
+static func _draw_sat_body(ci: CanvasItem) -> void:
+	_rect(ci, -10, -10, 20, 20, C_FOIL)
+	ci.draw_line(Vector2(-10, -3), Vector2(10, -3), C_FOIL.darkened(0.3), 1.0)
+	ci.draw_line(Vector2(-10, 4), Vector2(10, 4), C_FOIL.darkened(0.3), 1.0)
+	ci.draw_colored_polygon(PackedVector2Array([Vector2(10, -10), Vector2(10, 10), Vector2(5, 6), Vector2(8, 0), Vector2(4, -6)]), Pal.BG)
+	ci.draw_line(Vector2(-10, 0), Vector2(-14, 0), C_STRUT, 2.0)     # Stummel vom Ausleger
+
+
+## Parabolantenne mit abgeknicktem Mast
+static func _draw_sat_dish(ci: CanvasItem) -> void:
+	ci.draw_polyline(PackedVector2Array([Vector2(0, -2), Vector2(0, 5), Vector2(3, 8)]), C_STRUT, 2.0)
+	var dish := PackedVector2Array()
+	for i in 9:
+		dish.append(Vector2(0, -4) + Vector2.from_angle(PI + PI * i / 8.0) * 7.0)
 	ci.draw_colored_polygon(dish, C_SILVER)
 
 
