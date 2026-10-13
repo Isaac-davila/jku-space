@@ -22,11 +22,13 @@ const LEVEL := {
 	"panel": 0, "stage": 0, "vanguard": 0,
 	"panel_half": 1, "strut": 1, "nozzle": 1, "tank": 1, "shell": 1, "antenna": 1,
 	"shard": 2,
+	"iss_panel": 1,
 }
 const BASE_R := {
 	"panel": 42.0, "stage": 36.0, "vanguard": 28.0,
 	"panel_half": 20.0, "strut": 18.0, "nozzle": 14.0, "tank": 16.0, "shell": 12.0, "antenna": 14.0,
 	"shard": 6.0,
+	"iss_panel": 16.0,
 }
 const SPLITS := {
 	"panel": ["panel_half", "panel_half", "strut"],
@@ -48,6 +50,8 @@ const C_FOIL := Color("c9a43a")
 const C_STRUT := Color("9aa3b5")
 const C_SHARD := Color("4da3ff")
 const C_SILVER := Color("d7dbe2")
+const C_ISS_ARRAY := Color("b5893a")
+const C_ISS_ARRAY_LINE := Color("7a5a22")
 
 
 static func make(kind: String, pos: Vector2, vel: Vector2, scale: float = 1.0) -> Dictionary:
@@ -108,6 +112,7 @@ static func draw(ci: CanvasItem, p: Dictionary) -> void:
 		"shell": _draw_shell(ci)
 		"antenna": _draw_antenna(ci)
 		"shard": _draw_shard(ci)
+		"iss_panel": _draw_iss_panel(ci)
 	ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	if p.kind == "vanguard" and p.scale >= 0.9:
 		ci.draw_string(ThemeDB.fallback_font, p.pos + Vector2(-62, -38), "Vanguard 1 · seit 1958",
@@ -203,6 +208,15 @@ static func _draw_antenna(ci: CanvasItem) -> void:
 	ci.draw_line(Vector2(-14, 0), Vector2(14, 0), C_STRUT, 2.0)
 	ci.draw_circle(Vector2(14, 0), 2, C_STRUT)
 	ci.draw_rect(Rect2(-16, -3, 4, 6), C_SILVER)
+
+
+# ISS-Solarflügel (fällt beim Ausweichspiel von der Station ab) ----------------
+
+static func _draw_iss_panel(ci: CanvasItem) -> void:
+	_rect(ci, -9, -14, 18, 28, C_ISS_ARRAY)
+	for k in range(1, 4):
+		ci.draw_line(Vector2(-9, -14 + k * 7), Vector2(9, -14 + k * 7), C_ISS_ARRAY_LINE, 1.0)
+	ci.draw_line(Vector2(0, -14), Vector2(0, 14), C_ISS_ARRAY_LINE, 1.0)
 
 
 # KLEINSTE STUFE --------------------------------------------------------------
