@@ -29,6 +29,10 @@ const SHAKE_HIT := 14.0        # Bildschirmwackeln bei einem Treffer (Pixel)
 const SHAKE_BREAK := 22.0      # … beim Zerfall
 const STAR_DRIFT := 12.0       # Sterne ziehen langsam vorbei (px/s) – man fliegt ja
 
+# Physik
+const IMPULSE := 0.35          # wie viel Schwung ein Treffer an die Stationsteile weitergibt
+const MAX_PIECES := 220        # ab so vielen Teilen zerbricht nichts mehr (Leistung)
+
 # ISS-Farben
 const C_TRUSS := Color("8a93a6")
 const C_ARRAY := Color("b5893a")       # ISS-Solarflügel wirken goldbraun
@@ -40,7 +44,7 @@ const C_SCORCH := Color("2a2a2a")
 
 ## Die 4 Solarflügel: (Seite x, Seite y). Bei Treffer 1 und 2 fällt je einer ab.
 const ARRAYS := [Vector2(-1, -1), Vector2(-1, 1), Vector2(1, -1), Vector2(1, 1)]
-const LOST_AT_HIT := {1: 2, 2: 1}      # Treffer-Nr. → Index des Flügels, der abreißt
+# Welcher Flügel abreißt, entscheidet der Einschlagsort: immer der, der am nächsten dran ist.
 
 var ship_y := 360.0
 var vel := 0.0
@@ -73,6 +77,7 @@ var spawn_ramp := 1.0              # 0 → 1: Müll kommt nach der Kamerafahrt l
 var shake := 0.0                   # aktuelle Wackel-Stärke, klingt von selbst ab
 var hit_flash := 0.0               # roter Bildschirmrand bei Treffern (1 → 0)
 var hud_draw: Control              # Hüllenanzeige oben links
+var lost_arrays: Array[int] = []   # Indizes der abgerissenen Solarflügel
 
 
 func start() -> void:
@@ -141,22 +146,48 @@ func tick(delta: float) -> void:
 	var ship := Vector2(SHIP_X, ship_y)
 	for d in debris:
 		if invuln <= 0.0 and d.pos.distance_to(ship) < SHIP_R + d.r * 0.8:
-			d.pos.x = -100.0
-			take_hit()
+			# das Trümmerteil verschwindet nicht – es zerbricht und fliegt gebremst weiter
+			debris.erase(d)
+			for frag in Debris.split(d):
+				frag.vel = d.vel * 0.55 + (frag.vel - d.vel) * 0.6
+				frag["immune"] = 0.5
+				debris.append(frag)
+			take_hit(d)
 			return
 
 
 ## Ein Treffer: Station verliert ein Teil – beim letzten Treffer zerfällt sie.
-func take_hit() -> void:
+## hit: das Trümmerteil, das uns getroffen hat (für Richtung und Einschlagsort).
+func take_hit(hit: Dictionary = {}) -> void:
 	hits += 1
 	invuln = 1.0
 	shake = SHAKE_HIT
 	hit_flash = 1.0
+	var ship := Vector2(SHIP_X, ship_y)
+	var impact_pos: Vector2 = hit.get("pos", ship + Vector2(40, 0))
+	var push: Vector2 = hit.get("vel", Vector2(-450, 0)) * IMPULSE
+	flashes.append({"pos": ship + (impact_pos - ship).limit_length(40.0), "t": 0.3})
 	if hits >= MAX_HITS:
-		_break_apart()
-	elif LOST_AT_HIT.has(hits):
-		var a: Vector2 = ARRAYS[LOST_AT_HIT[hits]]
-		_throw_off("iss_panel", Vector2(a.x * 70, a.y * 19), 1.0)
+		_break_apart(push, impact_pos)
+		return
+	# der Flügel, der dem Einschlag am nächsten ist, reißt ab – und fliegt in Stoßrichtung weg
+	var best := -1
+	var best_d := INF
+	for i in ARRAYS.size():
+		if _array_lost(i):
+			continue
+		var a: Vector2 = ARRAYS[i]
+		var dist := (ship + _array_offset(a)).distance_to(impact_pos)
+		if dist < best_d:
+			best = i
+			best_d = dist
+	if best >= 0:
+		lost_arrays.append(best)
+		_throw_off("iss_panel", _array_offset(ARRAYS[best]), 1.0, push * 1.4)
+
+
+func _array_offset(a: Vector2) -> Vector2:
+	return Vector2(a.x * 70, a.y * 19)
 
 
 ## Auch nach "STATION ZERBROCHEN" / "AUSGEWICHEN!" fliegt der Müll im Hintergrund weiter.
@@ -196,6 +227,8 @@ func _move_pieces(delta: float) -> void:
 	for d in debris + wreck:
 		d.pos += d.vel * delta
 		d.rot += d.spin * delta
+		if d.has("immune"):
+			d.immune -= delta
 	var left := _view_rect().position.x
 	debris = debris.filter(func(d): return d.pos.x > left - 80.0)
 	# großzügige Grenzen, weil die Kamera beim Zerfall mitfährt
@@ -205,9 +238,10 @@ func _move_pieces(delta: float) -> void:
 # --- Schaden & Zerfall -------------------------------------------------------
 
 ## Löst ein Teil von der Station und lässt es wie normalen Müll wegtreiben.
-func _throw_off(kind: String, offset: Vector2, scale: float) -> void:
+## push: Schwung vom Einschlag – das Teil fliegt in die Richtung, in die es gestoßen wurde.
+func _throw_off(kind: String, offset: Vector2, scale: float, push := Vector2.ZERO) -> void:
 	var dir := offset.normalized() if offset != Vector2.ZERO else Vector2.from_angle(randf() * TAU)
-	var v := dir * randf_range(60, 140) + Vector2(-60, vel * 0.5)
+	var v := dir * randf_range(60, 140) + Vector2(-60, vel * 0.5) + push
 	var piece := Debris.make(kind, Vector2(SHIP_X, ship_y) + offset, v, scale)
 	piece.rot = 0.0                      # startet exakt so, wie es an der Station saß
 	piece.spin = randf_range(-4, 4)
@@ -215,21 +249,29 @@ func _throw_off(kind: String, offset: Vector2, scale: float) -> void:
 
 
 ## Die ganze Station zerfällt in ihre Bauteile – gleiche Mechanik wie bei den Trümmern.
-func _break_apart() -> void:
+func _break_apart(push := Vector2(-160, 0), impact_pos := Vector2.INF) -> void:
 	broken = true
 	set_timer_visible(false)           # nach dem Tod keine Zeit mehr oben rechts
 	shake = SHAKE_BREAK
+	var parts := [
+		["strut", Vector2(-42, 0), 2.0],          # Gitterträger links
+		["strut", Vector2(42, 0), 2.0],           # Gitterträger rechts
+		["tank", Vector2(0, -14), 1.0],           # Module
+		["tank", Vector2(0, 14), 1.0],
+		["tank", Vector2(0, 34), 0.7],            # angedockter Progress-Frachter
+		["strut", Vector2(-28, -10), 0.7],        # Radiatoren
+		["strut", Vector2(28, 10), 0.7],
+	]
 	for i in ARRAYS.size():
 		if not _array_lost(i):
-			var a: Vector2 = ARRAYS[i]
-			_throw_off("iss_panel", Vector2(a.x * 70, a.y * 19), 1.0)
-	_throw_off("strut", Vector2(-42, 0), 2.0)          # Gitterträger links
-	_throw_off("strut", Vector2(42, 0), 2.0)           # Gitterträger rechts
-	_throw_off("tank", Vector2(0, -14), 1.0)           # Module
-	_throw_off("tank", Vector2(0, 14), 1.0)
-	_throw_off("tank", Vector2(0, 34), 0.7)             # angedockter Progress-Frachter
-	_throw_off("strut", Vector2(-28, -10), 0.7)        # Radiatoren
-	_throw_off("strut", Vector2(28, 10), 0.7)
+			parts.append(["iss_panel", _array_offset(ARRAYS[i]), 1.0])
+	var ship := Vector2(SHIP_X, ship_y)
+	if impact_pos == Vector2.INF:
+		impact_pos = ship + Vector2(40, 0)
+	for part in parts:
+		# Teile nahe am Einschlag bekommen mehr Schwung ab
+		var near := 1.0 - clampf((ship + part[1]).distance_to(impact_pos) / 140.0, 0.0, 0.7)
+		_throw_off(part[0], part[1], part[2], push * near)
 	_start_cinematic()
 
 
@@ -250,7 +292,7 @@ func _start_cinematic() -> void:
 			var away: Vector2 = (w.pos - follow.pos).normalized()
 			if away == Vector2.ZERO:
 				away = Vector2.from_angle(randf() * TAU)
-			w.vel = follow.vel + away * randf_range(180, 300)
+			w.vel = follow.vel + away * randf_range(180, 300) + (w.vel - follow.vel) * 0.25
 	cam.position = VIEW / 2.0
 	cam.zoom = Vector2.ONE
 	cam.enabled = true
@@ -261,9 +303,6 @@ func _start_cinematic() -> void:
 func _update_cinematic(delta: float) -> void:
 	if follow.is_empty():
 		return
-	for f in flashes:
-		f.t -= delta
-	flashes = flashes.filter(func(f): return f.t > 0.0)
 
 	# 1) Dem Teil folgen, bis es allein im Bild ist → dann kommt der Satellit von rechts
 	if victim.is_empty() and impact_t < 0.0:
@@ -368,10 +407,7 @@ func _say(text: String) -> void:
 
 
 func _array_lost(i: int) -> bool:
-	for h in LOST_AT_HIT:
-		if LOST_AT_HIT[h] == i and hits >= h:
-			return true
-	return false
+	return lost_arrays.has(i)
 
 
 # --- Zeichnen ----------------------------------------------------------------
@@ -488,6 +524,11 @@ func _draw_progress_and_thrusters() -> void:
 # --- Spielgefühl: Wackeln, Treffer-Blitz, Warnungen, Hüllenanzeige -------------
 
 func _update_feel(delta: float) -> void:
+	for f in flashes:
+		f.t -= delta
+	flashes = flashes.filter(func(f): return f.t > 0.0)
+	if broken or done:
+		_collide_pieces()
 	shake = maxf(shake - 40.0 * delta, 0.0)
 	hit_flash = maxf(hit_flash - 2.2 * delta, 0.0)
 	cam.offset = Vector2(randf_range(-1, 1), randf_range(-1, 1)) * shake
@@ -540,3 +581,57 @@ func _draw_hud() -> void:
 		if intact and hits == MAX_HITS - 1:
 			col.a = 0.6 + 0.4 * sin(elapsed * 10.0)      # letztes Segment blinkt
 		hud_draw.draw_rect(Rect2(95 + i * 34, 78, 28, 16), col)
+
+
+# --- Zusammenstöße zwischen Trümmern (nach dem Tod / nach Spielende) ---------
+
+## Alle Teile können sich gegenseitig treffen. Größere Teile zerbrechen dabei,
+## blaue Splitter prallen nur ab. Die Bruchstücke übernehmen den gemeinsamen Schwung.
+func _collide_pieces() -> void:
+	var all: Array = []
+	var view := _view_rect().grow(150.0)
+	for d in debris + wreck:
+		if d != follow and view.has_point(d.pos) and d.get("immune", 0.0) <= 0.0:
+			all.append(d)
+	var allow_split := debris.size() + wreck.size() < MAX_PIECES
+	var used := PackedByteArray()
+	used.resize(all.size())
+	for i in all.size():
+		if used[i]:
+			continue
+		var a: Dictionary = all[i]
+		for j in range(i + 1, all.size()):
+			if used[j]:
+				continue
+			var b: Dictionary = all[j]
+			if not Debris.can_split(a) and not Debris.can_split(b):
+				continue
+			if a.pos.distance_to(b.pos) > (a.r + b.r) * 0.6:
+				continue
+			used[i] = 1
+			used[j] = 1
+			_resolve_collision(a, b, allow_split)
+			break
+
+
+func _resolve_collision(a: Dictionary, b: Dictionary, allow_split: bool) -> void:
+	var ma: float = a.r * a.r
+	var mb: float = b.r * b.r
+	var common: Vector2 = (a.vel * ma + b.vel * mb) / (ma + mb)   # gemeinsamer Schwung
+	flashes.append({"pos": (a.pos + b.pos) * 0.5, "t": 0.2})
+	for p in [a, b]:
+		var other: Dictionary = b if p == a else a
+		var away: Vector2 = (p.pos - other.pos).normalized()
+		if allow_split and Debris.can_split(p):
+			var frags := Debris.split(p)
+			for frag in frags:
+				frag.vel = common + (frag.vel - p.vel) * 0.7 + away * 40.0
+				frag["immune"] = 0.5
+			if debris.has(p):
+				debris.erase(p)
+			else:
+				wreck.erase(p)
+			wreck.append_array(frags)
+		else:
+			p.vel = common + away * 70.0
+			p["immune"] = 0.3
