@@ -23,6 +23,12 @@ const RAMP_TIME := 4.0         # so lange dauert es, bis wieder gleich viel Mül
 const END_DELAY := 6.5         # nach dem Einschlag, bis "STATION ZERBROCHEN" kommt
 const CHAIN_TIMEOUT := 18.0    # Sicherheitsnetz
 
+# Spielgefühl
+const SPAWN_AHEAD := 380.0     # so weit rechts außerhalb entsteht Müll → Zeit für die Warnung am Rand
+const SHAKE_HIT := 14.0        # Bildschirmwackeln bei einem Treffer (Pixel)
+const SHAKE_BREAK := 22.0      # … beim Zerfall
+const STAR_DRIFT := 12.0       # Sterne ziehen langsam vorbei (px/s) – man fliegt ja
+
 # ISS-Farben
 const C_TRUSS := Color("8a93a6")
 const C_ARRAY := Color("b5893a")       # ISS-Solarflügel wirken goldbraun
@@ -63,6 +69,11 @@ var alone_t := 0.0                 # wie lange das Teil schon allein im Bild ist
 var spawning := true               # während der Kamerafahrt kommt kein neuer Müll
 var spawn_ramp := 1.0              # 0 → 1: Müll kommt nach der Kamerafahrt langsam wieder
 
+# Spielgefühl
+var shake := 0.0                   # aktuelle Wackel-Stärke, klingt von selbst ab
+var hit_flash := 0.0               # roter Bildschirmrand bei Treffern (1 → 0)
+var hud_draw: Control              # Hüllenanzeige oben links
+
 
 func start() -> void:
 	# Hintergrund (Sterne + Erde) in eigener Ebene → bleibt stehen, wenn die Kamera fährt
@@ -74,14 +85,20 @@ func start() -> void:
 	bg.draw.connect(_draw_background)
 	cam = Camera2D.new()
 	cam.position = VIEW / 2.0
-	cam.enabled = false
 	add_child(cam)
+	cam.enabled = true                # immer aktiv – für Bildschirmwackeln und Kamerafahrt
+	cam.make_current()
 	var hud := CanvasLayer.new()
 	hud.layer = 6
 	add_child(hud)
 	cap_label = UI.make_centered("", 28, Pal.WARN, Rect2(40, 90, VIEW.x - 80, 90))
 	cap_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(cap_label)
+	hud_draw = Control.new()
+	hud_draw.size = VIEW
+	hud_draw.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud_draw.draw.connect(_draw_hud)
+	hud.add_child(hud_draw)
 
 
 func _exit_tree() -> void:
@@ -98,6 +115,7 @@ func _init() -> void:
 
 func tick(delta: float) -> void:
 	bg.queue_redraw()
+	_update_feel(delta)
 	_move_pieces(delta * time_k)
 	if spawning:
 		_spawn_debris(delta * time_k)
@@ -132,6 +150,8 @@ func tick(delta: float) -> void:
 func take_hit() -> void:
 	hits += 1
 	invuln = 1.0
+	shake = SHAKE_HIT
+	hit_flash = 1.0
 	if hits >= MAX_HITS:
 		_break_apart()
 	elif LOST_AT_HIT.has(hits):
@@ -142,6 +162,7 @@ func take_hit() -> void:
 ## Auch nach "STATION ZERBROCHEN" / "AUSGEWICHEN!" fliegt der Müll im Hintergrund weiter.
 func post_tick(delta: float) -> void:
 	bg.queue_redraw()
+	_update_feel(delta)
 	_move_pieces(delta * time_k)
 	if spawning:
 		_spawn_debris(delta * time_k)
@@ -156,7 +177,8 @@ func _spawn_debris(delta: float) -> void:
 		return
 	spawn_t = lerpf(0.5, 0.16, difficulty()) / maxf(spawn_ramp, 0.08)
 	var view := _view_rect()
-	var pos := Vector2(view.end.x + 60, view.position.y + randf_range(100, 630))
+	var ahead := SPAWN_AHEAD if not broken else 60.0
+	var pos := Vector2(view.end.x + ahead, view.position.y + randf_range(100, 630))
 	var dv := Vector2(-randf_range(380, 600) * (1.0 + difficulty() * 0.6), 0)
 	# 40 % große Teile (verkleinert), sonst einzelne Bauteile – siehe core/debris.gd
 	if randf() < 0.4:
@@ -195,6 +217,8 @@ func _throw_off(kind: String, offset: Vector2, scale: float) -> void:
 ## Die ganze Station zerfällt in ihre Bauteile – gleiche Mechanik wie bei den Trümmern.
 func _break_apart() -> void:
 	broken = true
+	set_timer_visible(false)           # nach dem Tod keine Zeit mehr oben rechts
+	shake = SHAKE_BREAK
 	for i in ARRAYS.size():
 		if not _array_lost(i):
 			var a: Vector2 = ARRAYS[i]
@@ -354,14 +378,18 @@ func _array_lost(i: int) -> bool:
 
 func _draw_background() -> void:
 	for st in _stars:
-		bg.draw_circle(Vector2(st.x, st.y), st.z, Color(1, 1, 1, 0.25 + st.z * 0.2))
+		# hellere (= nähere) Sterne ziehen etwas schneller → leichte Tiefenwirkung
+		var x := fposmod(st.x - elapsed * STAR_DRIFT * st.z, VIEW.x)
+		bg.draw_circle(Vector2(x, st.y), st.z, Color(1, 1, 1, 0.25 + st.z * 0.2))
 	earth.draw(bg, elapsed, elapsed / time_limit)     # Nacht → Sonnenaufgang → Tag
 
 
 func _draw() -> void:
 	for d in debris:
-		draw_line(d.pos + Vector2(d.r, 0), d.pos + Vector2(d.r + 40, 0), Color(Pal.DEBRIS, 0.25), 2.0)
+		_draw_trail(d)
 		Debris.draw(self, d)
+	if not broken:
+		_draw_warnings()
 	if not broken:
 		var blink := invuln > 0.0 and int(invuln * 12.0) % 2 == 0
 		if not blink:
@@ -375,8 +403,6 @@ func _draw() -> void:
 	for f in flashes:
 		var k: float = f.t / 0.3
 		draw_circle(f.pos, 30.0 * (1.0 - k) + 4.0, Color(1, 1, 1, 0.85 * k))
-	if not broken:
-		draw_text(Vector2(32, 100), "Treffer: %d / %d" % [hits, MAX_HITS], 24, Pal.ALERT if hits > 0 else Pal.DIM)
 
 
 ## Stark vereinfachte ISS: Gitterträger, 4 Solarflügel, Module in der Mitte, Radiatoren.
@@ -457,3 +483,60 @@ func _draw_progress_and_thrusters() -> void:
 		var length := (6.0 + 10.0 * thrust) * flicker
 		for x in [-6.0, 6.0]:
 			draw_colored_polygon(PackedVector2Array([Vector2(x - 2.5, -24), Vector2(x + 2.5, -24), Vector2(x, -24 - length)]), Color(0.85, 0.92, 1.0, 0.8))
+
+
+# --- Spielgefühl: Wackeln, Treffer-Blitz, Warnungen, Hüllenanzeige -------------
+
+func _update_feel(delta: float) -> void:
+	shake = maxf(shake - 40.0 * delta, 0.0)
+	hit_flash = maxf(hit_flash - 2.2 * delta, 0.0)
+	cam.offset = Vector2(randf_range(-1, 1), randf_range(-1, 1)) * shake
+	hud_draw.queue_redraw()
+
+
+## Bewegungsspur hinter jedem Teil: wird nach hinten blasser.
+func _draw_trail(d: Dictionary) -> void:
+	var start: Vector2 = d.pos + Vector2(d.r * 0.6, 0)
+	var length := clampf(-d.vel.x * 0.12, 20.0, 90.0)
+	for k in 4:
+		var a := start + Vector2(length * k / 4.0, 0)
+		var b := start + Vector2(length * (k + 1) / 4.0, 0)
+		draw_line(a, b, Color(Pal.DEBRIS, 0.22 * (1.0 - k / 4.0)), 2.0)
+
+
+## Rote Markierung am rechten Rand für Müll, der gleich ins Bild fliegt.
+## (Wie bei der echten ISS: Bahnverfolgung warnt, bevor das Teil da ist.)
+func _draw_warnings() -> void:
+	var edge := _view_rect().end.x
+	for d in debris:
+		if d.pos.x <= edge:
+			continue
+		var dist: float = d.pos.x - edge
+		var a := clampf(1.0 - dist / SPAWN_AHEAD, 0.15, 1.0)
+		var size := 7.0 + 6.0 * clampf(d.r / 25.0, 0.0, 1.0)
+		var tip := Vector2(edge - 12.0, d.pos.y)
+		var pulse := 0.7 + 0.3 * sin(elapsed * 14.0)
+		draw_colored_polygon(PackedVector2Array([tip, tip + Vector2(size, -size), tip + Vector2(size, size)]),
+			Color(Pal.ALERT, a * pulse))
+
+
+func _draw_hud() -> void:
+	# roter Rand bei Treffern
+	if hit_flash > 0.0:
+		var c := Color(Pal.ALERT, 0.35 * hit_flash)
+		var w := 26.0
+		hud_draw.draw_rect(Rect2(0, 0, VIEW.x, w), c)
+		hud_draw.draw_rect(Rect2(0, VIEW.y - w, VIEW.x, w), c)
+		hud_draw.draw_rect(Rect2(0, 0, w, VIEW.y), c)
+		hud_draw.draw_rect(Rect2(VIEW.x - w, 0, w, VIEW.y), c)
+	if broken:
+		return
+	# Hüllenanzeige: 3 Segmente, die bei Treffern ausgehen
+	var font := ThemeDB.fallback_font
+	hud_draw.draw_string(font, Vector2(32, 92), "HÜLLE", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Pal.DIM)
+	for i in MAX_HITS:
+		var intact := i < MAX_HITS - hits
+		var col := (Pal.OK if hits == 0 else (Pal.WARN if hits == 1 else Pal.ALERT)) if intact else Color(Pal.LINE, 0.6)
+		if intact and hits == MAX_HITS - 1:
+			col.a = 0.6 + 0.4 * sin(elapsed * 10.0)      # letztes Segment blinkt
+		hud_draw.draw_rect(Rect2(95 + i * 34, 78, 28, 16), col)

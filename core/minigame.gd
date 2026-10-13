@@ -88,6 +88,11 @@ func finish(success: bool, message: String = "") -> void:
 		get_tree().reload_current_scene()
 
 
+## Blendet die Zeitanzeige oben rechts ein/aus (z. B. nach dem Tod).
+func set_timer_visible(v: bool) -> void:
+	_time_label.visible = v
+
+
 func show_message(text: String, color: Color = Pal.TEXT) -> void:
 	_msg_label.text = text
 	_msg_label.add_theme_color_override("font_color", color)
