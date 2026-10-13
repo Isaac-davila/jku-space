@@ -18,7 +18,9 @@ const ALONE_MAX := 6.0         # Sicherheitsnetz: spätestens dann kommt der Sat
 const SAT_APPROACH := 110.0    # wie langsam sich der Satellit nähert (px/s im Bild)
 const SLOWMO := 0.25           # Zeitlupe beim Einschlag (1.0 = normal)
 const SLOWMO_TIME := 2.0       # Sekunden Zeitlupe
-const END_DELAY := 4.5         # nach dem Einschlag, bis "STATION ZERBROCHEN" kommt
+const ZOOM_OUT_AFTER := 1.5    # so lange nach dem Einschlag bleibt die Kamera nah dran
+const RAMP_TIME := 4.0         # so lange dauert es, bis wieder gleich viel Müll kommt wie vorher
+const END_DELAY := 6.5         # nach dem Einschlag, bis "STATION ZERBROCHEN" kommt
 const CHAIN_TIMEOUT := 18.0    # Sicherheitsnetz
 
 # ISS-Farben
@@ -59,6 +61,7 @@ var flashes: Array[Dictionary] = []
 var follow_t := 0.0                # wie lange wir dem Teil schon folgen
 var alone_t := 0.0                 # wie lange das Teil schon allein im Bild ist
 var spawning := true               # während der Kamerafahrt kommt kein neuer Müll
+var spawn_ramp := 1.0              # 0 → 1: Müll kommt nach der Kamerafahrt langsam wieder
 
 
 func start() -> void:
@@ -151,8 +154,9 @@ func _spawn_debris(delta: float) -> void:
 	spawn_t -= delta
 	if spawn_t > 0.0:
 		return
-	spawn_t = lerpf(0.5, 0.16, difficulty())
-	var pos := Vector2(VIEW.x + 60, randf_range(100, 630))
+	spawn_t = lerpf(0.5, 0.16, difficulty()) / maxf(spawn_ramp, 0.08)
+	var view := _view_rect()
+	var pos := Vector2(view.end.x + 60, view.position.y + randf_range(100, 630))
 	var dv := Vector2(-randf_range(380, 600) * (1.0 + difficulty() * 0.6), 0)
 	# 40 % große Teile (verkleinert), sonst einzelne Bauteile – siehe core/debris.gd
 	if randf() < 0.4:
@@ -170,7 +174,8 @@ func _move_pieces(delta: float) -> void:
 	for d in debris + wreck:
 		d.pos += d.vel * delta
 		d.rot += d.spin * delta
-	debris = debris.filter(func(d): return d.pos.x > -80.0)
+	var left := _view_rect().position.x
+	debris = debris.filter(func(d): return d.pos.x > left - 80.0)
 	# großzügige Grenzen, weil die Kamera beim Zerfall mitfährt
 	wreck = wreck.filter(func(d): return d.pos.x > -1500.0 and d.pos.y > -600.0 and d.pos.y < VIEW.y + 600.0)
 
@@ -258,18 +263,29 @@ func _update_cinematic(delta: float) -> void:
 	if impact_t >= 0.0:
 		var since := broken_t - impact_t
 		time_k = SLOWMO if since < SLOWMO_TIME else lerpf(time_k, 1.0, clampf(1.5 * delta, 0.0, 1.0))
-		if since > SLOWMO_TIME:
-			spawning = true
+		if since > ZOOM_OUT_AFTER:
+			if not spawning:
+				spawning = true
+				spawn_ramp = 0.0
+				spawn_t = 0.6
+			spawn_ramp = minf(spawn_ramp + delta / RAMP_TIME, 1.0)
 
 	# Kamera: langsam ranzoomen und dem Teil folgen, nach der Zeitlupe gemächlich rauszoomen
 	var target_zoom := CAM_ZOOM
 	var target_pos: Vector2 = follow.pos
-	if impact_t >= 0.0 and broken_t - impact_t > SLOWMO_TIME:
-		target_zoom = 1.0
-		target_pos = VIEW / 2.0
+	if impact_t >= 0.0 and broken_t - impact_t > ZOOM_OUT_AFTER:
+		target_zoom = 1.0          # rauszoomen, aber über der Einschlagstelle bleiben
 	var k := clampf(CAM_SPEED * delta, 0.0, 1.0)
 	cam.zoom = cam.zoom.lerp(Vector2(target_zoom, target_zoom), k)
 	cam.position = cam.position.lerp(target_pos, clampf(k * 2.5, 0.0, 1.0))
+
+
+## Sichtbarer Bereich in Spielkoordinaten (folgt der Kamera, sobald sie aktiv ist).
+func _view_rect() -> Rect2:
+	if cam == null or not cam.enabled:
+		return Rect2(Vector2.ZERO, VIEW)
+	var half := VIEW / (2.0 * cam.zoom.x)
+	return Rect2(cam.position - half, half * 2.0)
 
 
 ## Wie viele andere Teile gerade noch im Kamerabild sind.
@@ -297,7 +313,7 @@ func _impact() -> void:
 	var parts := Debris.split(victim)
 	for part in parts:
 		part.vel = part.vel * 1.3 + follow.vel * 0.3
-	var shards := Debris.split(follow)          # auch das Stationsteil zerbricht
+	var shards := _split_in_two(follow)        # das Stationsteil bricht in zwei Hälften
 	wreck.erase(follow)
 	wreck.append_array(parts)
 	wreck.append_array(shards)
@@ -307,6 +323,20 @@ func _impact() -> void:
 	victim = {}
 	GameState.flags["kessler_seen"] = true
 	_say("… und das Trümmerteil trifft %s.\nAus einem Trümmerteil werden viele – jedes kann den nächsten treffen.\nDas ist das Kessler-Syndrom." % VICTIM_ACC)
+
+
+## Bricht ein Teil in zwei kleinere Hälften desselben Typs (z. B. ein halber Gitterträger).
+func _split_in_two(p: Dictionary) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	var axis := Vector2.RIGHT.rotated(p.rot)
+	for side in [-1.0, 1.0]:
+		var half_len: float = p.r * 0.5
+		var piece := Debris.make(p.kind, p.pos + axis * side * half_len, p.vel, p.scale * 0.5)
+		piece.rot = p.rot + side * 0.25          # leicht abgeknickt
+		piece.vel = p.vel + (axis * side + Vector2(0, randf_range(-0.6, 0.6))).normalized() * randf_range(60, 110)
+		piece.spin = side * randf_range(0.8, 1.6)
+		out.append(piece)
+	return out
 
 
 func _say(text: String) -> void:
