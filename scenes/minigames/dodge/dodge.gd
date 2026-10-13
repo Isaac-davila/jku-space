@@ -12,10 +12,14 @@ const MAX_HITS := 3
 const VICTIM_NAME := "Wettersatellit"
 const VICTIM_ACC := "einen Wettersatelliten"   # für den Satz "trifft …"
 const CAM_ZOOM := 1.9          # wie nah die Kamera rangeht
-const SLOWMO := 0.2            # Zeitlupe beim Einschlag (1.0 = normal)
-const SLOWMO_TIME := 1.4       # Sekunden Zeitlupe
-const END_DELAY := 3.0         # nach dem Einschlag, bis "STATION ZERBROCHEN" kommt
-const CHAIN_TIMEOUT := 10.0    # Sicherheitsnetz
+const CAM_SPEED := 1.2         # wie schnell die Kamera ranfährt (kleiner = gemächlicher)
+const ALONE_TIME := 2.0        # so lange sieht man das Teil ganz allein, bevor der Satellit kommt
+const ALONE_MAX := 6.0         # Sicherheitsnetz: spätestens dann kommt der Satellit
+const SAT_APPROACH := 110.0    # wie langsam sich der Satellit nähert (px/s im Bild)
+const SLOWMO := 0.25           # Zeitlupe beim Einschlag (1.0 = normal)
+const SLOWMO_TIME := 2.0       # Sekunden Zeitlupe
+const END_DELAY := 4.5         # nach dem Einschlag, bis "STATION ZERBROCHEN" kommt
+const CHAIN_TIMEOUT := 18.0    # Sicherheitsnetz
 
 # ISS-Farben
 const C_TRUSS := Color("8a93a6")
@@ -52,6 +56,9 @@ var victim: Dictionary = {}        # der Satellit, der getroffen wird
 var impact_t := -1.0               # broken_t beim Einschlag (-1 = noch nicht)
 var time_k := 1.0                  # Zeitlupen-Faktor
 var flashes: Array[Dictionary] = []
+var follow_t := 0.0                # wie lange wir dem Teil schon folgen
+var alone_t := 0.0                 # wie lange das Teil schon allein im Bild ist
+var spawning := true               # während der Kamerafahrt kommt kein neuer Müll
 
 
 func start() -> void:
@@ -89,7 +96,8 @@ func _init() -> void:
 func tick(delta: float) -> void:
 	bg.queue_redraw()
 	_move_pieces(delta * time_k)
-	_spawn_debris(delta * time_k)     # Müll kommt immer weiter – auch nach dem Zerfall
+	if spawning:
+		_spawn_debris(delta * time_k)
 	if broken:
 		broken_t += delta
 		_update_cinematic(delta)
@@ -132,7 +140,8 @@ func take_hit() -> void:
 func post_tick(delta: float) -> void:
 	bg.queue_redraw()
 	_move_pieces(delta * time_k)
-	_spawn_debris(delta * time_k)
+	if spawning:
+		_spawn_debris(delta * time_k)
 	if broken:
 		broken_t += delta
 		_update_cinematic(delta)
@@ -198,22 +207,26 @@ func _break_apart() -> void:
 # --- Kamerafahrt: ein Trümmerteil trifft einen Satelliten ---------------------
 
 func _start_cinematic() -> void:
-	# Der linke Gitterträger fliegt nach hinten – ihm folgt die Kamera
-	follow = wreck[wreck.size() - 6] if wreck.size() >= 6 else wreck[0]
+	spawning = false
+	# Der linke Gitterträger treibt langsam davon – ihm folgt die Kamera
+	follow = wreck[0]
 	for w in wreck:
 		if w.kind == "strut" and w.scale > 1.5 and w.pos.x < SHIP_X:
 			follow = w
-	follow.vel = Vector2(-170, randf_range(-20, 20))
-	# Satellit kreuzt die Flugbahn von links unten – im Bild, aber noch klein
-	var sat_start: Vector2 = follow.pos + Vector2(-560, 140)
-	victim = Debris.make("sat", sat_start, Vector2.ZERO, 1.0)
-	victim.rot = -0.2
-	victim.spin = 0.0
+	follow.vel = Vector2(-50, -8)
+	follow.spin = 0.8
+	# alle anderen Teile driften deutlich weg, damit das eine Teil bald allein ist
+	for w in wreck:
+		if w != follow:
+			var away: Vector2 = (w.pos - follow.pos).normalized()
+			if away == Vector2.ZERO:
+				away = Vector2.from_angle(randf() * TAU)
+			w.vel = follow.vel + away * randf_range(180, 300)
 	cam.position = VIEW / 2.0
 	cam.zoom = Vector2.ONE
 	cam.enabled = true
 	cam.make_current()
-	_say("Ein Teil der Station fliegt davon …")
+	_say("Die Station ist zerbrochen.")
 
 
 func _update_cinematic(delta: float) -> void:
@@ -223,28 +236,59 @@ func _update_cinematic(delta: float) -> void:
 		f.t -= delta
 	flashes = flashes.filter(func(f): return f.t > 0.0)
 
-	# Zeitlupe nach dem Einschlag, dann langsam zurück auf normal
-	if impact_t >= 0.0:
-		var since := broken_t - impact_t
-		time_k = SLOWMO if since < SLOWMO_TIME else lerpf(time_k, 1.0, clampf(3.0 * delta, 0.0, 1.0))
+	# 1) Dem Teil folgen, bis es allein im Bild ist → dann kommt der Satellit von rechts
+	if victim.is_empty() and impact_t < 0.0:
+		follow_t += delta
+		if alone_t > 0.0 or (follow_t > 0.8 and _others_in_view() == 0) or follow_t >= ALONE_MAX:
+			if alone_t == 0.0:
+				_say("Ein einziges Trümmerteil. Niemand kann es mehr steuern.")
+			alone_t += delta
+			if alone_t >= ALONE_TIME:
+				_spawn_victim()
 
-	# Satellit fliegt dem Teil entgegen (Treffpunkt wird jeden Frame neu angepeilt)
+	# 2) Satellit nähert sich langsam von rechts
 	if not victim.is_empty():
-		var meet: Vector2 = follow.pos + follow.vel * 0.15
-		victim.vel = victim.vel.lerp((meet - victim.pos).normalized() * 330.0, clampf(4.0 * delta, 0.0, 1.0))
+		var dir: Vector2 = (follow.pos - victim.pos).normalized()
+		victim.vel = follow.vel + dir * SAT_APPROACH
 		victim.pos += victim.vel * delta * time_k
 		if victim.pos.distance_to(follow.pos) < victim.r + follow.r * 0.4:
 			_impact()
 
-	# Kamera: erst ranzoomen und dem Teil folgen, nach dem Einschlag wieder rauszoomen
+	# 3) Nach dem Einschlag: Zeitlupe, dann langsam zurück auf normal
+	if impact_t >= 0.0:
+		var since := broken_t - impact_t
+		time_k = SLOWMO if since < SLOWMO_TIME else lerpf(time_k, 1.0, clampf(1.5 * delta, 0.0, 1.0))
+		if since > SLOWMO_TIME:
+			spawning = true
+
+	# Kamera: langsam ranzoomen und dem Teil folgen, nach der Zeitlupe gemächlich rauszoomen
 	var target_zoom := CAM_ZOOM
 	var target_pos: Vector2 = follow.pos
 	if impact_t >= 0.0 and broken_t - impact_t > SLOWMO_TIME:
 		target_zoom = 1.0
 		target_pos = VIEW / 2.0
-	var k := clampf(3.0 * delta, 0.0, 1.0)
+	var k := clampf(CAM_SPEED * delta, 0.0, 1.0)
 	cam.zoom = cam.zoom.lerp(Vector2(target_zoom, target_zoom), k)
-	cam.position = cam.position.lerp(target_pos, k * 1.5)
+	cam.position = cam.position.lerp(target_pos, clampf(k * 2.5, 0.0, 1.0))
+
+
+## Wie viele andere Teile gerade noch im Kamerabild sind.
+func _others_in_view() -> int:
+	var half := VIEW / (2.0 * cam.zoom.x)
+	var view := Rect2(cam.position - half, half * 2.0).grow(20.0)
+	var n := 0
+	for d in debris + wreck:
+		if d != follow and view.has_point(d.pos):
+			n += 1
+	return n
+
+
+func _spawn_victim() -> void:
+	var half_w := VIEW.x / (2.0 * cam.zoom.x)
+	victim = Debris.make("sat", follow.pos + Vector2(half_w + 60.0, -25.0), follow.vel, 1.0)
+	victim.rot = 0.0
+	victim.spin = 0.15
+	_say("Ein %s kreuzt seine Bahn …" % VICTIM_NAME)
 
 
 func _impact() -> void:
@@ -258,9 +302,11 @@ func _impact() -> void:
 	wreck.append_array(parts)
 	wreck.append_array(shards)
 	follow = {"pos": victim.pos, "vel": Vector2.ZERO, "r": 0.0}   # Kamera bleibt am Einschlagsort
+	for part in parts + shards:
+		part.vel *= 0.6                        # Bruchstücke treiben ruhiger auseinander
 	victim = {}
 	GameState.flags["kessler_seen"] = true
-	_say("… und trifft %s.\nAus einem Trümmerteil werden viele – jedes kann den nächsten treffen.\nDas ist das Kessler-Syndrom." % VICTIM_ACC)
+	_say("… und das Trümmerteil trifft %s.\nAus einem Trümmerteil werden viele – jedes kann den nächsten treffen.\nDas ist das Kessler-Syndrom." % VICTIM_ACC)
 
 
 func _say(text: String) -> void:
