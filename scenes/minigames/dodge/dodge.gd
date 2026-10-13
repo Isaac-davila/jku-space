@@ -35,7 +35,7 @@ var earth := Earth.new()          # Erde im Hintergrund (core/earth.gd)
 
 func _init() -> void:
 	title = "Ausweichmanöver"
-	instructions = "W/S oder Pfeiltasten – oder Finger gedrückt halten, wohin die Station soll"
+	instructions = ""   # kein Steuerungstext unten
 	time_limit = 20.0
 
 
@@ -140,9 +140,6 @@ func _array_lost(i: int) -> bool:
 func _draw() -> void:
 	draw_stars()
 	earth.draw(self, elapsed, elapsed / time_limit)   # Nacht → Sonnenaufgang → Tag
-	# Bahnlinien
-	for y in range(140, 640, 100):
-		draw_line(Vector2(0, y), Vector2(VIEW.x, y), Color(Pal.LINE, 0.35), 1.0)
 	for d in debris:
 		draw_line(d.pos + Vector2(d.r, 0), d.pos + Vector2(d.r + 40, 0), Color(Pal.DEBRIS, 0.25), 2.0)
 		Debris.draw(self, d)
