@@ -50,6 +50,7 @@ func _run() -> void:
 		print("OK  ", path)
 
 	await _test_laser_lesson()
+	_test_debris_split()
 	await _test_capture_combo()
 	await _test_full_run()
 
@@ -94,7 +95,9 @@ func _test_laser_lesson() -> void:
 		guard += 1
 		if mg.pieces.is_empty():
 			break
-		var target: Vector2 = mg.pieces[0].pos
+		var target: Vector2 = mg.first_target()
+		if target == Vector2.INF:
+			break
 		mg.shoot_at(target)
 		await process_frame
 	_check(mg.pieces.size() > before, "Laser: Treffer erzeugen keine Fragmente")
@@ -103,6 +106,21 @@ func _test_laser_lesson() -> void:
 	_check(gs.flags.get("kessler_seen", false), "Laser: Flag kessler_seen nicht gesetzt")
 	print("OK  Laser-Lektion (%d Teile nach %d Schüssen)" % [mg.pieces.size(), mg.shots])
 	mg.queue_free()
+
+
+## Prüft den Zerfall: groß → 3 sinnvolle Bauteile → je 3 blaue Splitter → Ende.
+func _test_debris_split() -> void:
+	for kind in ["panel", "stage", "vanguard"]:
+		var big := Debris.make(kind, Vector2(500, 300), Vector2.ZERO)
+		var parts := Debris.split(big)
+		_check(parts.size() == 3, "%s: sollte in 3 Teile zerfallen" % kind)
+		for part in parts:
+			_check(part.level == 1 and part.kind != "shard", "%s: 1. Zerfall muss Bauteile liefern" % kind)
+			var shards := Debris.split(part)
+			_check(shards.size() == 3, "%s: 2. Zerfall sollte 3 Splitter liefern" % part.kind)
+			for s in shards:
+				_check(s.kind == "shard" and not Debris.can_split(s), "Splitter dürfen nicht weiter zerfallen")
+	print("OK  Trümmer-Zerfall (groß → Bauteile → blaue Splitter)")
 
 
 ## Prüft das Netz: 3 Teile auf einmal fangen = 90 Punkte.

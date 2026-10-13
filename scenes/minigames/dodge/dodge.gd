@@ -35,19 +35,18 @@ func tick(delta: float) -> void:
 	spawn_t -= delta
 	if spawn_t <= 0.0:
 		spawn_t = lerpf(0.5, 0.16, difficulty())
-		debris.append({
-			"pos": Vector2(VIEW.x + 40, randf_range(100, 630)),
-			"r": randf_range(8, 24),
-			"speed": randf_range(380, 600) * (1.0 + difficulty() * 0.6),
-			"rot": randf() * TAU,
-			"spin": randf_range(-4, 4),
-			"seed": randf() * 10.0,
-		})
+		var pos := Vector2(VIEW.x + 60, randf_range(100, 630))
+		var vel := Vector2(-randf_range(380, 600) * (1.0 + difficulty() * 0.6), 0)
+		# 40 % große Teile (verkleinert), sonst einzelne Bauteile – siehe core/debris.gd
+		if randf() < 0.4:
+			debris.append(Debris.random_big(pos, vel, randf_range(0.55, 0.7)))
+		else:
+			debris.append(Debris.random_small(pos, vel))
 
 	invuln = maxf(invuln - delta, 0.0)
 	var ship := Vector2(SHIP_X, ship_y)
 	for d in debris:
-		d.pos.x -= d.speed * delta
+		d.pos += d.vel * delta
 		d.rot += d.spin * delta
 		if invuln <= 0.0 and d.pos.distance_to(ship) < SHIP_R + d.r * 0.8:
 			hits += 1
@@ -56,7 +55,7 @@ func tick(delta: float) -> void:
 			if hits >= MAX_HITS:
 				finish(false, "STATION GETROFFEN")
 				return
-	debris = debris.filter(func(d): return d.pos.x > -60.0)
+	debris = debris.filter(func(d): return d.pos.x > -80.0)
 
 
 func on_timeout() -> void:
@@ -69,8 +68,8 @@ func _draw() -> void:
 	for y in range(140, 640, 100):
 		draw_line(Vector2(0, y), Vector2(VIEW.x, y), Color(Pal.LINE, 0.35), 1.0)
 	for d in debris:
-		draw_debris(d.pos, d.r, d.rot, Pal.DEBRIS, d.seed)
 		draw_line(d.pos + Vector2(d.r, 0), d.pos + Vector2(d.r + 40, 0), Color(Pal.DEBRIS, 0.25), 2.0)
+		Debris.draw(self, d)
 	var blink := invuln > 0.0 and int(invuln * 12.0) % 2 == 0
 	if not blink:
 		_draw_station(Vector2(SHIP_X, ship_y))

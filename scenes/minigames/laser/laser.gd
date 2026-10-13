@@ -1,21 +1,21 @@
 extends Minigame
 ## ABWEHRLASER – der Twist: Schießen fühlt sich gut an … bis jeder Treffer
 ## neue Fragmente erzeugt und der Bildschirm sich füllt (Kessler-Syndrom).
+## Zerfall: großes Teil → 3 Bauteile → je 3 blaue Splitter (siehe core/debris.gd).
 ## Lernziel: Abschießen ist KEINE Lösung. Das Spiel endet deshalb immer "erfolgreich",
 ## sobald die Lektion gezeigt wurde. Owner: Rolle 4
 
 const STATION := Vector2(140, 360)
+const START_PIECES := 6
 const LESSON_AT := 40          # ab so vielen Teilen kommt der Funkspruch
 const LESSON_TIME := 4.5
 
 var pieces: Array[Dictionary] = []
-var created := 0
 var shots := 0
 var beam_t := 0.0
 var beam_to := Vector2.ZERO
 var lesson := false
 var lesson_t := 0.0
-var _ui_count: Label
 
 
 func _init() -> void:
@@ -25,15 +25,10 @@ func _init() -> void:
 
 
 func start() -> void:
-	for i in 5:
-		_spawn(Vector2(randf_range(600, 1150), randf_range(140, 600)), randf_range(30, 44),
-			Vector2(randf_range(-60, -20), randf_range(-30, 30)))
-
-
-func _spawn(pos: Vector2, r: float, v: Vector2) -> void:
-	pieces.append({"pos": pos, "r": r, "vel": v, "rot": randf() * TAU,
-		"spin": randf_range(-3, 3), "seed": randf() * 10.0})
-	created += 1
+	for i in START_PIECES:
+		var pos := Vector2(randf_range(450, 1180), randf_range(150, 590))
+		var vel := Vector2(randf_range(-60, -20), randf_range(-30, 30))
+		pieces.append(Debris.random_big(pos, vel))
 
 
 func tick(delta: float) -> void:
@@ -47,7 +42,7 @@ func tick(delta: float) -> void:
 			p.vel.y = -p.vel.y
 		p.pos = p.pos.clamp(Vector2(260, 100), Vector2(VIEW.x - 20, VIEW.y - 90))
 
-	if not lesson and pieces.size() >= LESSON_AT:
+	if not lesson and (pieces.size() >= LESSON_AT or first_target() == Vector2.INF):
 		_start_lesson()
 	if lesson:
 		lesson_t += delta
@@ -73,22 +68,36 @@ func _unhandled_input(event: InputEvent) -> void:
 	shoot_at(get_global_mouse_position())
 
 
-## Schuss auf Position m. Treffer zerlegt das Teil in 2–3 Fragmente.
+## Schuss auf Position m. Trifft das nächstgelegene teilbare Teil.
+## Blaue Splitter sind zu klein – der Laser geht durch.
 func shoot_at(m: Vector2) -> void:
 	if lesson:
 		return
 	shots += 1
 	beam_t = 0.12
 	beam_to = m
-	for i in range(pieces.size() - 1, -1, -1):
+	var best := -1
+	var best_d := INF
+	for i in pieces.size():
 		var p: Dictionary = pieces[i]
-		if p.pos.distance_to(m) < p.r + 16.0:
-			pieces.remove_at(i)
-			var n := 3 if p.r > 14.0 else 2
-			for k in n:
-				var dir := Vector2.from_angle(randf() * TAU)
-				_spawn(p.pos + dir * p.r * 0.4, maxf(p.r * 0.55, 6.0), p.vel + dir * randf_range(80, 180))
-			return
+		if not Debris.can_split(p):
+			continue
+		var d: float = p.pos.distance_to(m)
+		if d < p.r + 16.0 and d < best_d:
+			best = i
+			best_d = d
+	if best >= 0:
+		var hit: Dictionary = pieces[best]
+		pieces.remove_at(best)
+		pieces.append_array(Debris.split(hit))
+
+
+## Position des ersten noch teilbaren Teils (oder Vector2.INF). Für Tests/Hinweise.
+func first_target() -> Vector2:
+	for p in pieces:
+		if Debris.can_split(p):
+			return p.pos
+	return Vector2.INF
 
 
 func _draw() -> void:
@@ -96,7 +105,7 @@ func _draw() -> void:
 	if lesson:
 		draw_rect(Rect2(Vector2.ZERO, VIEW), Color(Pal.ALERT, 0.08 + 0.06 * sin(elapsed * 10.0)))
 	for p in pieces:
-		draw_debris(p.pos, p.r, p.rot, Pal.DEBRIS, p.seed)
+		Debris.draw(self, p)
 	draw_circle(STATION, 46, Pal.PANEL)
 	draw_circle(STATION, 30, Pal.HULL)
 	draw_rect(Rect2(STATION + Vector2(20, -6), Vector2(50, 12)), Pal.LINE)
