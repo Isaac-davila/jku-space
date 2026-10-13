@@ -6,15 +6,16 @@ extends Minigame
 const SHIP_X := 220.0
 const SHIP_R := 30.0
 const MAX_HITS := 3
-const END_DELAY := 2.5         # Pause nach der Kettenreaktion, bevor "verloren" kommt
-const CHAIN_TIMEOUT := 9.0     # Sicherheitsnetz: spätestens dann ist Schluss
-
-## Kettenreaktion nach dem Zerfall: welcher Satellit getroffen wird.
+# Kamerafahrt nach dem Zerfall: die Kamera folgt einem Trümmerteil, bis es einen Satelliten trifft.
 ## (GPS-Satelliten fliegen auf ~20.000 km Höhe – ISS-Trümmer kommen da nie hin.
 ##  Realistisch sind Satelliten im niedrigen Orbit wie Wetter- oder Internetsatelliten.)
-const VICTIM_NAMES := ["Wettersatellit", "Internetsatellit"]
-const VICTIM_ACC := ["einen Wettersatelliten", "einen Internetsatelliten"]   # für den Satz "trifft …"
-const VICTIM_SPEED := 520.0
+const VICTIM_NAME := "Wettersatellit"
+const VICTIM_ACC := "einen Wettersatelliten"   # für den Satz "trifft …"
+const CAM_ZOOM := 1.9          # wie nah die Kamera rangeht
+const SLOWMO := 0.2            # Zeitlupe beim Einschlag (1.0 = normal)
+const SLOWMO_TIME := 1.4       # Sekunden Zeitlupe
+const END_DELAY := 3.0         # nach dem Einschlag, bis "STATION ZERBROCHEN" kommt
+const CHAIN_TIMEOUT := 10.0    # Sicherheitsnetz
 
 # ISS-Farben
 const C_TRUSS := Color("8a93a6")
@@ -41,13 +42,42 @@ var broken_t := 0.0
 var earth := Earth.new()          # Erde im Hintergrund (core/earth.gd)
 var thrust := 0.0                 # -1 = Schub nach oben, +1 = nach unten (für die Düsen-Animation)
 
-# Kettenreaktion
-var victims: Array[Dictionary] = []  # Satelliten, die gleich getroffen werden
-var chain_hits := 0
-var chain_end_t := -1.0
-var caption := ""
-var caption_t := 0.0
+# Kamerafahrt
+var cam: Camera2D
+var bg_layer: CanvasLayer
+var bg: Node2D
+var cap_label: Label
+var follow: Dictionary = {}        # das Trümmerteil, dem die Kamera folgt
+var victim: Dictionary = {}        # der Satellit, der getroffen wird
+var impact_t := -1.0               # broken_t beim Einschlag (-1 = noch nicht)
+var time_k := 1.0                  # Zeitlupen-Faktor
 var flashes: Array[Dictionary] = []
+
+
+func start() -> void:
+	# Hintergrund (Sterne + Erde) in eigener Ebene → bleibt stehen, wenn die Kamera fährt
+	bg_layer = CanvasLayer.new()
+	bg_layer.layer = -5
+	add_child(bg_layer)
+	bg = Node2D.new()
+	bg_layer.add_child(bg)
+	bg.draw.connect(_draw_background)
+	cam = Camera2D.new()
+	cam.position = VIEW / 2.0
+	cam.enabled = false
+	add_child(cam)
+	var hud := CanvasLayer.new()
+	hud.layer = 6
+	add_child(hud)
+	cap_label = UI.make_centered("", 28, Pal.WARN, Rect2(40, 90, VIEW.x - 80, 90))
+	cap_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud.add_child(cap_label)
+
+
+func _exit_tree() -> void:
+	# Kamera zurücksetzen, damit der Hub danach nicht verschoben aussieht
+	if is_inside_tree():
+		get_viewport().canvas_transform = Transform2D.IDENTITY
 
 
 func _init() -> void:
@@ -57,12 +87,13 @@ func _init() -> void:
 
 
 func tick(delta: float) -> void:
-	_move_pieces(delta)
-	_spawn_debris(delta)              # Müll kommt immer weiter – auch nach dem Zerfall
+	bg.queue_redraw()
+	_move_pieces(delta * time_k)
+	_spawn_debris(delta * time_k)     # Müll kommt immer weiter – auch nach dem Zerfall
 	if broken:
 		broken_t += delta
-		_update_chain(delta)
-		if (chain_end_t >= 0.0 and broken_t >= chain_end_t) or broken_t >= CHAIN_TIMEOUT:
+		_update_cinematic(delta)
+		if (impact_t >= 0.0 and broken_t >= impact_t + END_DELAY) or broken_t >= CHAIN_TIMEOUT:
 			finish(false, "STATION ZERBROCHEN")
 		return
 
@@ -99,9 +130,12 @@ func take_hit() -> void:
 
 ## Auch nach "STATION ZERBROCHEN" / "AUSGEWICHEN!" fliegt der Müll im Hintergrund weiter.
 func post_tick(delta: float) -> void:
-	_move_pieces(delta)
-	_spawn_debris(delta)
-	_update_chain(delta)
+	bg.queue_redraw()
+	_move_pieces(delta * time_k)
+	_spawn_debris(delta * time_k)
+	if broken:
+		broken_t += delta
+		_update_cinematic(delta)
 
 
 func _spawn_debris(delta: float) -> void:
@@ -128,7 +162,8 @@ func _move_pieces(delta: float) -> void:
 		d.pos += d.vel * delta
 		d.rot += d.spin * delta
 	debris = debris.filter(func(d): return d.pos.x > -80.0)
-	wreck = wreck.filter(func(d): return d.pos.x > -80.0 and d.pos.y > -80.0 and d.pos.y < VIEW.y + 80.0)
+	# großzügige Grenzen, weil die Kamera beim Zerfall mitfährt
+	wreck = wreck.filter(func(d): return d.pos.x > -1500.0 and d.pos.y > -600.0 and d.pos.y < VIEW.y + 600.0)
 
 
 # --- Schaden & Zerfall -------------------------------------------------------
@@ -146,11 +181,6 @@ func _throw_off(kind: String, offset: Vector2, scale: float) -> void:
 ## Die ganze Station zerfällt in ihre Bauteile – gleiche Mechanik wie bei den Trümmern.
 func _break_apart() -> void:
 	broken = true
-	_say("Die Station ist zerbrochen …")
-	# zwei Satelliten kommen von rechts – der erste trifft unsere Trümmer,
-	# der zweite die Trümmer des ersten → Kettenreaktion
-	_add_victim(0, Vector2(VIEW.x + 80, clampf(ship_y - 70, 140, 600)), wreck)
-	_add_victim(1, Vector2(VIEW.x + 520, clampf(ship_y + 90, 140, 600)), [])
 	for i in ARRAYS.size():
 		if not _array_lost(i):
 			var a: Vector2 = ARRAYS[i]
@@ -162,73 +192,79 @@ func _break_apart() -> void:
 	_throw_off("tank", Vector2(0, 34), 0.7)             # angedockter Progress-Frachter
 	_throw_off("strut", Vector2(-28, -10), 0.7)        # Radiatoren
 	_throw_off("strut", Vector2(28, 10), 0.7)
+	_start_cinematic()
 
 
-# --- Kettenreaktion (Kessler-Syndrom) ----------------------------------------
+# --- Kamerafahrt: ein Trümmerteil trifft einen Satelliten ---------------------
 
-func _add_victim(idx: int, pos: Vector2, targets: Array) -> void:
-	var sat := Debris.make("sat", pos, Vector2(-VICTIM_SPEED, 0), 1.0)
-	sat.rot = 0.0
-	sat.spin = 0.0
-	sat["label"] = VICTIM_NAMES[idx]
-	sat["acc"] = VICTIM_ACC[idx]
-	sat["targets"] = targets
-	victims.append(sat)
+func _start_cinematic() -> void:
+	# Der linke Gitterträger fliegt nach hinten – ihm folgt die Kamera
+	follow = wreck[wreck.size() - 6] if wreck.size() >= 6 else wreck[0]
+	for w in wreck:
+		if w.kind == "strut" and w.scale > 1.5 and w.pos.x < SHIP_X:
+			follow = w
+	follow.vel = Vector2(-170, randf_range(-20, 20))
+	# Satellit kreuzt die Flugbahn von links unten – im Bild, aber noch klein
+	var sat_start: Vector2 = follow.pos + Vector2(-560, 140)
+	victim = Debris.make("sat", sat_start, Vector2.ZERO, 1.0)
+	victim.rot = -0.2
+	victim.spin = 0.0
+	cam.position = VIEW / 2.0
+	cam.zoom = Vector2.ONE
+	cam.enabled = true
+	cam.make_current()
+	_say("Ein Teil der Station fliegt davon …")
 
 
-func _update_chain(delta: float) -> void:
-	caption_t += delta
+func _update_cinematic(delta: float) -> void:
+	if follow.is_empty():
+		return
 	for f in flashes:
 		f.t -= delta
 	flashes = flashes.filter(func(f): return f.t > 0.0)
-	for v in victims.duplicate():
-		v.pos += v.vel * delta
-		# leicht auf das nächste Ziel zusteuern, damit der Treffer sicher passiert
-		var target := _nearest(v.pos, v.targets)
-		if target.is_empty():
-			target = _nearest(v.pos, wreck)
-		if target.is_empty():
-			continue
-		var want: Vector2 = (target.pos - v.pos).normalized() * VICTIM_SPEED
-		v.vel = v.vel.lerp(want, clampf(2.5 * delta, 0.0, 1.0))
-		if v.pos.distance_to(target.pos) < v.r + target.r * 0.6:
-			_hit_victim(v)
+
+	# Zeitlupe nach dem Einschlag, dann langsam zurück auf normal
+	if impact_t >= 0.0:
+		var since := broken_t - impact_t
+		time_k = SLOWMO if since < SLOWMO_TIME else lerpf(time_k, 1.0, clampf(3.0 * delta, 0.0, 1.0))
+
+	# Satellit fliegt dem Teil entgegen (Treffpunkt wird jeden Frame neu angepeilt)
+	if not victim.is_empty():
+		var meet: Vector2 = follow.pos + follow.vel * 0.15
+		victim.vel = victim.vel.lerp((meet - victim.pos).normalized() * 330.0, clampf(4.0 * delta, 0.0, 1.0))
+		victim.pos += victim.vel * delta * time_k
+		if victim.pos.distance_to(follow.pos) < victim.r + follow.r * 0.4:
+			_impact()
+
+	# Kamera: erst ranzoomen und dem Teil folgen, nach dem Einschlag wieder rauszoomen
+	var target_zoom := CAM_ZOOM
+	var target_pos: Vector2 = follow.pos
+	if impact_t >= 0.0 and broken_t - impact_t > SLOWMO_TIME:
+		target_zoom = 1.0
+		target_pos = VIEW / 2.0
+	var k := clampf(3.0 * delta, 0.0, 1.0)
+	cam.zoom = cam.zoom.lerp(Vector2(target_zoom, target_zoom), k)
+	cam.position = cam.position.lerp(target_pos, k * 1.5)
 
 
-func _hit_victim(v: Dictionary) -> void:
-	victims.erase(v)
-	chain_hits += 1
-	flashes.append({"pos": v.pos, "t": 0.35})
-	var parts := Debris.split(v)
+func _impact() -> void:
+	impact_t = broken_t
+	flashes.append({"pos": victim.pos, "t": 0.3})
+	var parts := Debris.split(victim)
 	for part in parts:
-		part.vel = part.vel * 1.6 + Vector2(-80, 0)
+		part.vel = part.vel * 1.3 + follow.vel * 0.3
+	var shards := Debris.split(follow)          # auch das Stationsteil zerbricht
+	wreck.erase(follow)
 	wreck.append_array(parts)
-	# der nächste Satellit zielt auf die Trümmer dieses Satelliten
-	for other in victims:
-		if other.targets.is_empty():
-			other.targets = parts
-	if chain_hits == 1:
-		_say("Ein Trümmerteil trifft %s …" % v.acc)
-	else:
-		_say("… dessen Trümmer treffen den nächsten.\nEine Kettenreaktion: das Kessler-Syndrom.")
-		GameState.flags["kessler_seen"] = true
-		chain_end_t = broken_t + END_DELAY
-
-
-func _nearest(from: Vector2, list: Array) -> Dictionary:
-	var best: Dictionary = {}
-	var best_d := INF
-	for d in list:
-		var dist: float = from.distance_to(d.pos)
-		if dist < best_d and d.pos.x > -40.0:
-			best = d
-			best_d = dist
-	return best
+	wreck.append_array(shards)
+	follow = {"pos": victim.pos, "vel": Vector2.ZERO, "r": 0.0}   # Kamera bleibt am Einschlagsort
+	victim = {}
+	GameState.flags["kessler_seen"] = true
+	_say("… und trifft %s.\nAus einem Trümmerteil werden viele – jedes kann den nächsten treffen.\nDas ist das Kessler-Syndrom." % VICTIM_ACC)
 
 
 func _say(text: String) -> void:
-	caption = text
-	caption_t = 0.0
+	cap_label.text = text
 
 
 func _array_lost(i: int) -> bool:
@@ -240,9 +276,13 @@ func _array_lost(i: int) -> bool:
 
 # --- Zeichnen ----------------------------------------------------------------
 
+func _draw_background() -> void:
+	for st in _stars:
+		bg.draw_circle(Vector2(st.x, st.y), st.z, Color(1, 1, 1, 0.25 + st.z * 0.2))
+	earth.draw(bg, elapsed, elapsed / time_limit)     # Nacht → Sonnenaufgang → Tag
+
+
 func _draw() -> void:
-	draw_stars()
-	earth.draw(self, elapsed, elapsed / time_limit)   # Nacht → Sonnenaufgang → Tag
 	for d in debris:
 		draw_line(d.pos + Vector2(d.r, 0), d.pos + Vector2(d.r + 40, 0), Color(Pal.DEBRIS, 0.25), 2.0)
 		Debris.draw(self, d)
@@ -252,19 +292,15 @@ func _draw() -> void:
 			_draw_station(Vector2(SHIP_X, ship_y))
 	for w in wreck:
 		Debris.draw(self, w)
-	for v in victims:
-		Debris.draw(self, v)
-		draw_text(v.pos + Vector2(-50, -34), v.label, 16, Color(Pal.TEXT, 0.8))
+	if not victim.is_empty():
+		Debris.draw(self, victim)
+		draw_string(ThemeDB.fallback_font, victim.pos + Vector2(-60, -34), VICTIM_NAME,
+			HORIZONTAL_ALIGNMENT_CENTER, 120, 13, Color(Pal.TEXT, 0.85))
 	for f in flashes:
-		var k: float = f.t / 0.35
-		draw_circle(f.pos, 34.0 * (1.0 - k) + 6.0, Color(1, 1, 1, 0.8 * k))
-	if caption != "":
-		var a := clampf(caption_t * 3.0, 0.0, 1.0)
-		var lines := caption.split("\n")
-		for i in lines.size():
-			draw_string(ThemeDB.fallback_font, Vector2(0, 150 + i * 34), lines[i],
-				HORIZONTAL_ALIGNMENT_CENTER, VIEW.x, 26, Color(Pal.WARN, a))
-	draw_text(Vector2(32, 100), "Treffer: %d / %d" % [hits, MAX_HITS], 24, Pal.ALERT if hits > 0 else Pal.DIM)
+		var k: float = f.t / 0.3
+		draw_circle(f.pos, 30.0 * (1.0 - k) + 4.0, Color(1, 1, 1, 0.85 * k))
+	if not broken:
+		draw_text(Vector2(32, 100), "Treffer: %d / %d" % [hits, MAX_HITS], 24, Pal.ALERT if hits > 0 else Pal.DIM)
 
 
 ## Stark vereinfachte ISS: Gitterträger, 4 Solarflügel, Module in der Mitte, Radiatoren.
