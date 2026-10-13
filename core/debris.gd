@@ -23,17 +23,20 @@ const LEVEL := {
 	"panel_half": 1, "strut": 1, "nozzle": 1, "tank": 1, "shell": 1, "antenna": 1,
 	"shard": 2,
 	"iss_panel": 1,
+	"sat": 0,
 }
 const BASE_R := {
 	"panel": 42.0, "stage": 36.0, "vanguard": 28.0,
 	"panel_half": 20.0, "strut": 18.0, "nozzle": 14.0, "tank": 16.0, "shell": 12.0, "antenna": 14.0,
 	"shard": 6.0,
 	"iss_panel": 16.0,
+	"sat": 26.0,
 }
 const SPLITS := {
 	"panel": ["panel_half", "panel_half", "strut"],
 	"stage": ["nozzle", "tank", "strut"],
 	"vanguard": ["shell", "shell", "antenna"],
+	"sat": ["panel_half", "panel_half", "tank", "antenna"],
 }
 const SMALL_PARTS := ["panel_half", "strut", "nozzle", "tank", "shell", "antenna"]
 const VANGUARD_CHANCE := 0.1
@@ -113,6 +116,7 @@ static func draw(ci: CanvasItem, p: Dictionary) -> void:
 		"antenna": _draw_antenna(ci)
 		"shard": _draw_shard(ci)
 		"iss_panel": _draw_iss_panel(ci)
+		"sat": _draw_sat(ci)
 	ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	if p.kind == "vanguard" and p.scale >= 0.9:
 		ci.draw_string(ThemeDB.fallback_font, p.pos + Vector2(-62, -38), "Vanguard 1 · seit 1958",
@@ -217,6 +221,25 @@ static func _draw_iss_panel(ci: CanvasItem) -> void:
 	for k in range(1, 4):
 		ci.draw_line(Vector2(-9, -14 + k * 7), Vector2(9, -14 + k * 7), C_ISS_ARRAY_LINE, 1.0)
 	ci.draw_line(Vector2(0, -14), Vector2(0, 14), C_ISS_ARRAY_LINE, 1.0)
+
+
+# Aktiver Satellit (Opfer der Kettenreaktion im Ausweichspiel) -----------------
+
+static func _draw_sat(ci: CanvasItem) -> void:
+	for sx in [-1.0, 1.0]:
+		var x0: float = -38.0 if sx < 0 else 14.0
+		ci.draw_line(Vector2(sx * 10, 0), Vector2(sx * 14, 0), C_STRUT, 2.0)
+		_rect(ci, x0, -7, 24, 14, C_FRAME)
+		for k in 3:
+			_rect(ci, x0 + 1 + k * 7.7, -6, 6.7, 12, C_CELL)
+	_rect(ci, -10, -10, 20, 20, C_FOIL)
+	ci.draw_line(Vector2(-10, -3), Vector2(10, -3), C_FOIL.darkened(0.3), 1.0)
+	ci.draw_line(Vector2(-10, 4), Vector2(10, 4), C_FOIL.darkened(0.3), 1.0)
+	ci.draw_line(Vector2(0, -10), Vector2(0, -14), C_STRUT, 2.0)
+	var dish := PackedVector2Array()
+	for i in 9:
+		dish.append(Vector2(0, -16) + Vector2.from_angle(PI + PI * i / 8.0) * 7.0)
+	ci.draw_colored_polygon(dish, C_SILVER)
 
 
 # KLEINSTE STUFE --------------------------------------------------------------

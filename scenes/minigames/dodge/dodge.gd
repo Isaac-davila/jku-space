@@ -6,7 +6,15 @@ extends Minigame
 const SHIP_X := 220.0
 const SHIP_R := 30.0
 const MAX_HITS := 3
-const BREAKUP_TIME := 1.8      # so lange sieht man das Auseinanderfallen, bevor "verloren" kommt
+const END_DELAY := 2.5         # Pause nach der Kettenreaktion, bevor "verloren" kommt
+const CHAIN_TIMEOUT := 9.0     # Sicherheitsnetz: spätestens dann ist Schluss
+
+## Kettenreaktion nach dem Zerfall: welcher Satellit getroffen wird.
+## (GPS-Satelliten fliegen auf ~20.000 km Höhe – ISS-Trümmer kommen da nie hin.
+##  Realistisch sind Satelliten im niedrigen Orbit wie Wetter- oder Internetsatelliten.)
+const VICTIM_NAMES := ["Wettersatellit", "Internetsatellit"]
+const VICTIM_ACC := ["einen Wettersatelliten", "einen Internetsatelliten"]   # für den Satz "trifft …"
+const VICTIM_SPEED := 520.0
 
 # ISS-Farben
 const C_TRUSS := Color("8a93a6")
@@ -33,6 +41,14 @@ var broken_t := 0.0
 var earth := Earth.new()          # Erde im Hintergrund (core/earth.gd)
 var thrust := 0.0                 # -1 = Schub nach oben, +1 = nach unten (für die Düsen-Animation)
 
+# Kettenreaktion
+var victims: Array[Dictionary] = []  # Satelliten, die gleich getroffen werden
+var chain_hits := 0
+var chain_end_t := -1.0
+var caption := ""
+var caption_t := 0.0
+var flashes: Array[Dictionary] = []
+
 
 func _init() -> void:
 	title = "Ausweichmanöver"
@@ -42,9 +58,11 @@ func _init() -> void:
 
 func tick(delta: float) -> void:
 	_move_pieces(delta)
+	_spawn_debris(delta)              # Müll kommt immer weiter – auch nach dem Zerfall
 	if broken:
 		broken_t += delta
-		if broken_t >= BREAKUP_TIME:
+		_update_chain(delta)
+		if (chain_end_t >= 0.0 and broken_t >= chain_end_t) or broken_t >= CHAIN_TIMEOUT:
 			finish(false, "STATION ZERBROCHEN")
 		return
 
@@ -58,17 +76,6 @@ func tick(delta: float) -> void:
 	if ship_y < 110.0 or ship_y > 620.0:
 		ship_y = clampf(ship_y, 110.0, 620.0)
 		vel = 0.0
-
-	spawn_t -= delta
-	if spawn_t <= 0.0:
-		spawn_t = lerpf(0.5, 0.16, difficulty())
-		var pos := Vector2(VIEW.x + 60, randf_range(100, 630))
-		var dv := Vector2(-randf_range(380, 600) * (1.0 + difficulty() * 0.6), 0)
-		# 40 % große Teile (verkleinert), sonst einzelne Bauteile – siehe core/debris.gd
-		if randf() < 0.4:
-			debris.append(Debris.random_big(pos, dv, randf_range(0.55, 0.7)))
-		else:
-			debris.append(Debris.random_small(pos, dv))
 
 	invuln = maxf(invuln - delta, 0.0)
 	var ship := Vector2(SHIP_X, ship_y)
@@ -88,6 +95,27 @@ func take_hit() -> void:
 	elif LOST_AT_HIT.has(hits):
 		var a: Vector2 = ARRAYS[LOST_AT_HIT[hits]]
 		_throw_off("iss_panel", Vector2(a.x * 70, a.y * 19), 1.0)
+
+
+## Auch nach "STATION ZERBROCHEN" / "AUSGEWICHEN!" fliegt der Müll im Hintergrund weiter.
+func post_tick(delta: float) -> void:
+	_move_pieces(delta)
+	_spawn_debris(delta)
+	_update_chain(delta)
+
+
+func _spawn_debris(delta: float) -> void:
+	spawn_t -= delta
+	if spawn_t > 0.0:
+		return
+	spawn_t = lerpf(0.5, 0.16, difficulty())
+	var pos := Vector2(VIEW.x + 60, randf_range(100, 630))
+	var dv := Vector2(-randf_range(380, 600) * (1.0 + difficulty() * 0.6), 0)
+	# 40 % große Teile (verkleinert), sonst einzelne Bauteile – siehe core/debris.gd
+	if randf() < 0.4:
+		debris.append(Debris.random_big(pos, dv, randf_range(0.55, 0.7)))
+	else:
+		debris.append(Debris.random_small(pos, dv))
 
 
 func on_timeout() -> void:
@@ -118,6 +146,11 @@ func _throw_off(kind: String, offset: Vector2, scale: float) -> void:
 ## Die ganze Station zerfällt in ihre Bauteile – gleiche Mechanik wie bei den Trümmern.
 func _break_apart() -> void:
 	broken = true
+	_say("Die Station ist zerbrochen …")
+	# zwei Satelliten kommen von rechts – der erste trifft unsere Trümmer,
+	# der zweite die Trümmer des ersten → Kettenreaktion
+	_add_victim(0, Vector2(VIEW.x + 80, clampf(ship_y - 70, 140, 600)), wreck)
+	_add_victim(1, Vector2(VIEW.x + 520, clampf(ship_y + 90, 140, 600)), [])
 	for i in ARRAYS.size():
 		if not _array_lost(i):
 			var a: Vector2 = ARRAYS[i]
@@ -129,6 +162,73 @@ func _break_apart() -> void:
 	_throw_off("tank", Vector2(0, 34), 0.7)             # angedockter Progress-Frachter
 	_throw_off("strut", Vector2(-28, -10), 0.7)        # Radiatoren
 	_throw_off("strut", Vector2(28, 10), 0.7)
+
+
+# --- Kettenreaktion (Kessler-Syndrom) ----------------------------------------
+
+func _add_victim(idx: int, pos: Vector2, targets: Array) -> void:
+	var sat := Debris.make("sat", pos, Vector2(-VICTIM_SPEED, 0), 1.0)
+	sat.rot = 0.0
+	sat.spin = 0.0
+	sat["label"] = VICTIM_NAMES[idx]
+	sat["acc"] = VICTIM_ACC[idx]
+	sat["targets"] = targets
+	victims.append(sat)
+
+
+func _update_chain(delta: float) -> void:
+	caption_t += delta
+	for f in flashes:
+		f.t -= delta
+	flashes = flashes.filter(func(f): return f.t > 0.0)
+	for v in victims.duplicate():
+		v.pos += v.vel * delta
+		# leicht auf das nächste Ziel zusteuern, damit der Treffer sicher passiert
+		var target := _nearest(v.pos, v.targets)
+		if target.is_empty():
+			target = _nearest(v.pos, wreck)
+		if target.is_empty():
+			continue
+		var want: Vector2 = (target.pos - v.pos).normalized() * VICTIM_SPEED
+		v.vel = v.vel.lerp(want, clampf(2.5 * delta, 0.0, 1.0))
+		if v.pos.distance_to(target.pos) < v.r + target.r * 0.6:
+			_hit_victim(v)
+
+
+func _hit_victim(v: Dictionary) -> void:
+	victims.erase(v)
+	chain_hits += 1
+	flashes.append({"pos": v.pos, "t": 0.35})
+	var parts := Debris.split(v)
+	for part in parts:
+		part.vel = part.vel * 1.6 + Vector2(-80, 0)
+	wreck.append_array(parts)
+	# der nächste Satellit zielt auf die Trümmer dieses Satelliten
+	for other in victims:
+		if other.targets.is_empty():
+			other.targets = parts
+	if chain_hits == 1:
+		_say("Ein Trümmerteil trifft %s …" % v.acc)
+	else:
+		_say("… dessen Trümmer treffen den nächsten.\nEine Kettenreaktion: das Kessler-Syndrom.")
+		GameState.flags["kessler_seen"] = true
+		chain_end_t = broken_t + END_DELAY
+
+
+func _nearest(from: Vector2, list: Array) -> Dictionary:
+	var best: Dictionary = {}
+	var best_d := INF
+	for d in list:
+		var dist: float = from.distance_to(d.pos)
+		if dist < best_d and d.pos.x > -40.0:
+			best = d
+			best_d = dist
+	return best
+
+
+func _say(text: String) -> void:
+	caption = text
+	caption_t = 0.0
 
 
 func _array_lost(i: int) -> bool:
@@ -152,6 +252,18 @@ func _draw() -> void:
 			_draw_station(Vector2(SHIP_X, ship_y))
 	for w in wreck:
 		Debris.draw(self, w)
+	for v in victims:
+		Debris.draw(self, v)
+		draw_text(v.pos + Vector2(-50, -34), v.label, 16, Color(Pal.TEXT, 0.8))
+	for f in flashes:
+		var k: float = f.t / 0.35
+		draw_circle(f.pos, 34.0 * (1.0 - k) + 6.0, Color(1, 1, 1, 0.8 * k))
+	if caption != "":
+		var a := clampf(caption_t * 3.0, 0.0, 1.0)
+		var lines := caption.split("\n")
+		for i in lines.size():
+			draw_string(ThemeDB.fallback_font, Vector2(0, 150 + i * 34), lines[i],
+				HORIZONTAL_ALIGNMENT_CENTER, VIEW.x, 26, Color(Pal.WARN, a))
 	draw_text(Vector2(32, 100), "Treffer: %d / %d" % [hits, MAX_HITS], 24, Pal.ALERT if hits > 0 else Pal.DIM)
 
 

@@ -43,6 +43,7 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	queue_redraw()
 	if done:
+		post_tick(delta)
 		return
 	elapsed += delta
 	time_left = maxf(time_left - delta, 0.0)
@@ -59,6 +60,11 @@ func start() -> void:
 
 
 func tick(_delta: float) -> void:
+	pass
+
+
+## Läuft weiter, NACHDEM das Minispiel beendet ist (z. B. Hintergrund weiterlaufen lassen).
+func post_tick(_delta: float) -> void:
 	pass
 
 
