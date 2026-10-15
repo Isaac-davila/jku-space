@@ -41,8 +41,8 @@ const MAX_SPEED := 300.0       # Höchstgeschwindigkeit hoch/runter
 # Energie für die Triebwerke
 const ENERGY_MAX := 100.0
 const ENERGY_USE := 30.0       # Verbrauch pro Sekunde bei vollem Schub
-const ENERGY_REGEN := 12.0     # Aufladung pro Sekunde (mit allen 4 Solarflügeln)
-const REGEN_DELAY := 0.5       # so lange nach dem letzten Schub, bis wieder geladen wird
+const ENERGY_REGEN := 5.0      # Aufladung pro Sekunde mit allen 4 Solarflügeln (jeder verlorene Flügel: −25 %)
+const REGEN_DELAY := 1.0       # so lange nach dem letzten Schub, bis wieder geladen wird
 
 # Müllmenge: Abstand zwischen zwei Teilen am Anfang → am Ende (Sekunden)
 const SPAWN_START := 0.8       # vorher 0.5
