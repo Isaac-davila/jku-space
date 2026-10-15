@@ -33,6 +33,21 @@ const STAR_DRIFT := 12.0       # Sterne ziehen langsam vorbei (px/s) – man fli
 const IMPULSE := 0.35          # wie viel Schwung ein Treffer an die Stationsteile weitergibt
 const MAX_PIECES := 220        # ab so vielen Teilen zerbricht nichts mehr (Leistung)
 
+# Steuerung – die Station ist schwer und träge
+const THRUST := 600.0          # Beschleunigung bei vollem Schub (vorher 1700)
+const DAMPING := 1.1           # wie schnell sie von selbst abbremst (vorher 2.2)
+const MAX_SPEED := 300.0       # Höchstgeschwindigkeit hoch/runter
+
+# Energie für die Triebwerke
+const ENERGY_MAX := 100.0
+const ENERGY_USE := 30.0       # Verbrauch pro Sekunde bei vollem Schub
+const ENERGY_REGEN := 12.0     # Aufladung pro Sekunde (mit allen 4 Solarflügeln)
+const REGEN_DELAY := 0.5       # so lange nach dem letzten Schub, bis wieder geladen wird
+
+# Müllmenge: Abstand zwischen zwei Teilen am Anfang → am Ende (Sekunden)
+const SPAWN_START := 0.8       # vorher 0.5
+const SPAWN_END := 0.35        # vorher 0.16
+
 # ISS-Farben
 const C_TRUSS := Color("8a93a6")
 const C_ARRAY := Color("b5893a")       # ISS-Solarflügel wirken goldbraun
@@ -76,7 +91,10 @@ var spawn_ramp := 1.0              # 0 → 1: Müll kommt nach der Kamerafahrt l
 # Spielgefühl
 var shake := 0.0                   # aktuelle Wackel-Stärke, klingt von selbst ab
 var hit_flash := 0.0               # roter Bildschirmrand bei Treffern (1 → 0)
-var hud_draw: Control              # Hüllenanzeige oben links
+var hud_draw: Control              # Energieanzeige oben links
+var energy := ENERGY_MAX
+var since_thrust := 99.0           # Sekunden seit dem letzten Schub
+var empty_blink := 0.0             # "KEINE ENERGIE"-Hinweis
 var lost_arrays: Array[int] = []   # Indizes der abgerissenen Solarflügel
 
 
@@ -134,9 +152,11 @@ func tick(delta: float) -> void:
 	var input := Input.get_axis("move_up", "move_down")
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		input = clampf((get_global_mouse_position().y - ship_y) / 80.0, -1.0, 1.0)
+	input = _use_energy(input, delta)
 	thrust = input
-	vel += input * 1700.0 * delta
-	vel -= vel * 2.2 * delta
+	vel += input * THRUST * delta
+	vel -= vel * DAMPING * delta
+	vel = clampf(vel, -MAX_SPEED, MAX_SPEED)
 	ship_y += vel * delta
 	if ship_y < 110.0 or ship_y > 620.0:
 		ship_y = clampf(ship_y, 110.0, 620.0)
@@ -206,7 +226,7 @@ func _spawn_debris(delta: float) -> void:
 	spawn_t -= delta
 	if spawn_t > 0.0:
 		return
-	spawn_t = lerpf(0.5, 0.16, difficulty()) / maxf(spawn_ramp, 0.08)
+	spawn_t = lerpf(SPAWN_START, SPAWN_END, difficulty()) / maxf(spawn_ramp, 0.08)
 	var view := _view_rect()
 	var ahead := SPAWN_AHEAD if not broken else 60.0
 	var pos := Vector2(view.end.x + ahead, view.position.y + randf_range(100, 630))
@@ -572,15 +592,44 @@ func _draw_hud() -> void:
 		hud_draw.draw_rect(Rect2(VIEW.x - w, 0, w, VIEW.y), c)
 	if broken:
 		return
-	# Hüllenanzeige: 3 Segmente, die bei Treffern ausgehen
+	# Energieanzeige (die Leben sieht man an der Station selbst)
 	var font := ThemeDB.fallback_font
-	hud_draw.draw_string(font, Vector2(32, 92), "HÜLLE", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Pal.DIM)
-	for i in MAX_HITS:
-		var intact := i < MAX_HITS - hits
-		var col := (Pal.OK if hits == 0 else (Pal.WARN if hits == 1 else Pal.ALERT)) if intact else Color(Pal.LINE, 0.6)
-		if intact and hits == MAX_HITS - 1:
-			col.a = 0.6 + 0.4 * sin(elapsed * 10.0)      # letztes Segment blinkt
-		hud_draw.draw_rect(Rect2(95 + i * 34, 78, 28, 16), col)
+	var bar := Rect2(32, 80, 220, 14)
+	var frac := energy / ENERGY_MAX
+	var col := Pal.OK if frac > 0.5 else (Pal.WARN if frac > 0.2 else Pal.ALERT)
+	hud_draw.draw_string(font, Vector2(32, 74), "ENERGIE", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Pal.DIM)
+	hud_draw.draw_rect(bar, Color(Pal.PANEL, 0.85))
+	hud_draw.draw_rect(Rect2(bar.position, Vector2(bar.size.x * frac, bar.size.y)), col)
+	hud_draw.draw_rect(bar, Pal.LINE, false, 1.5)
+	# Pfeil zeigt, ob gerade geladen wird – mit weniger Solarflügeln langsamer
+	if since_thrust >= REGEN_DELAY and energy < ENERGY_MAX:
+		hud_draw.draw_string(font, Vector2(bar.end.x + 10, bar.end.y), "lädt (%d/4 Solarflügel)" % _arrays_left(),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(Pal.OK, 0.8))
+	if empty_blink > 0.0:
+		var a := 0.5 + 0.5 * sin(elapsed * 14.0)
+		hud_draw.draw_string(font, Vector2(bar.end.x + 10, bar.end.y), "KEINE ENERGIE",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(Pal.ALERT, a))
+
+
+## Schub kostet Energie. Ist sie leer, passiert nichts – erst nach kurzer Pause wird
+## wieder geladen, und zwar nur so schnell, wie die verbliebenen Solarflügel es erlauben.
+func _use_energy(input: float, delta: float) -> float:
+	empty_blink = maxf(empty_blink - delta, 0.0)
+	var wants := absf(input) > 0.05
+	if wants and energy > 0.0:
+		energy = maxf(energy - ENERGY_USE * absf(input) * delta, 0.0)
+		since_thrust = 0.0
+		return input
+	if wants:
+		empty_blink = 0.6               # Taste gedrückt, aber leer → Hinweis
+	since_thrust += delta
+	if since_thrust >= REGEN_DELAY:
+		energy = minf(energy + ENERGY_REGEN * (_arrays_left() / 4.0) * delta, ENERGY_MAX)
+	return 0.0
+
+
+func _arrays_left() -> int:
+	return ARRAYS.size() - lost_arrays.size()
 
 
 # --- Zusammenstöße zwischen Trümmern (nach dem Tod / nach Spielende) ---------
