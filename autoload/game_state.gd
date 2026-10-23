@@ -146,6 +146,16 @@ func _add_action(action: String, keys: Array) -> void:
 		InputMap.action_add_event(action, ev)
 
 
+# --- Vollbild am Handy: beim ersten Antippen (Browser erlauben das nur nach einer Berührung) ---
+
+func _input(event: InputEvent) -> void:
+	var tapped: bool = (event is InputEventScreenTouch and event.pressed) \
+		or (event is InputEventMouseButton and event.pressed)
+	if tapped and OS.has_feature("web") and UI.is_touch() \
+			and DisplayServer.window_get_mode() != DisplayServer.WINDOW_MODE_FULLSCREEN:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
+
+
 # --- Hinweis "Bitte Handy drehen" (Handy im Hochformat, z. B. nach QR-Code-Scan) ---
 
 var _rotate_layer: CanvasLayer
