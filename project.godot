@@ -8,6 +8,7 @@ config_version=5
 config/name="Kaskade"
 config/description="Ein 5-Minuten-Spiel über Weltraummüll."
 run/main_scene="res://scenes/intro/intro.tscn"
+config/icon="res://icon.png"
 config/features=PackedStringArray("4.5", "GL Compatibility")
 
 [autoload]

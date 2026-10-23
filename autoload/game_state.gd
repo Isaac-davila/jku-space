@@ -60,10 +60,15 @@ var flags: Dictionary = {}
 
 
 func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS   # läuft auch, wenn das Spiel pausiert ist
 	_setup_input()
+	_setup_rotate_hint()
 
 
 func _process(delta: float) -> void:
+	_update_rotate_hint()
+	if get_tree().paused:
+		return
 	if not running:
 		return
 	time_left -= delta
@@ -139,3 +144,35 @@ func _add_action(action: String, keys: Array) -> void:
 		var ev := InputEventKey.new()
 		ev.physical_keycode = k
 		InputMap.action_add_event(action, ev)
+
+
+# --- Hinweis "Bitte Handy drehen" (Handy im Hochformat, z. B. nach QR-Code-Scan) ---
+
+var _rotate_layer: CanvasLayer
+
+
+func _setup_rotate_hint() -> void:
+	_rotate_layer = CanvasLayer.new()
+	_rotate_layer.layer = 100
+	_rotate_layer.visible = false
+	add_child(_rotate_layer)
+	var bg := ColorRect.new()
+	bg.color = Color("070b16")
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.size = Vector2(1280, 720)
+	_rotate_layer.add_child(bg)
+	var label := Label.new()
+	label.text = "Bitte dreh dein Handy\nins Querformat"
+	label.add_theme_font_size_override("font_size", 64)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.size = Vector2(1280, 720)
+	_rotate_layer.add_child(label)
+
+
+func _update_rotate_hint() -> void:
+	var size := get_window().size
+	var portrait := size.y > size.x
+	if portrait != _rotate_layer.visible:
+		_rotate_layer.visible = portrait
+		get_tree().paused = portrait          # Spiel pausiert, solange das Handy hochkant ist

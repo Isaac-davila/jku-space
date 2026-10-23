@@ -1,0 +1,67 @@
+name: Web-Version veröffentlichen
+
+# Bei jedem Push auf main wird das Spiel fürs Web exportiert und auf GitHub Pages gestellt.
+# Einmalig im Repo einstellen: Settings → Pages → Source: "GitHub Actions".
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      GODOT_VERSION: "4.5"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Godot + Web-Vorlagen aus dem Cache holen
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            godot
+            ~/.local/share/godot/export_templates
+          key: godot-${{ env.GODOT_VERSION }}-web
+
+      - name: Godot + Web-Vorlagen herunterladen
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          curl -sSL -o godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          unzip -q godot.zip && mv "Godot_v${GODOT_VERSION}-stable_linux.x86_64" godot && chmod +x godot
+          curl -sSL -o t.tpz "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          DIR=~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+          mkdir -p "$DIR"
+          unzip -oj t.tpz templates/web_nothreads_release.zip templates/web_nothreads_debug.zip templates/version.txt -d "$DIR"
+          rm t.tpz godot.zip
+
+      - name: Web-Export
+        run: |
+          ./godot --headless --import || true
+          mkdir -p build/web
+          ./godot --headless --export-release "Web" build/web/index.html
+          test -f build/web/index.wasm
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
