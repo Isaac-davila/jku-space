@@ -16,7 +16,7 @@ var flashes: Array[Dictionary] = []
 
 func _init() -> void:
 	title = "Leck abdichten"
-	instructions = "Tippe auf jedes Loch, um es zu flicken!"
+	instructions = UI.ctrl("Tippe auf jedes Loch, um es zu flicken!", "Klicke auf jedes Loch, um es zu flicken!")
 	time_limit = 18.0
 
 

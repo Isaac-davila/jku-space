@@ -22,7 +22,7 @@ var popups: Array[Dictionary] = []
 
 func _init() -> void:
 	title = "Trümmer einfangen"
-	instructions = "Tippe, wohin das Netz fliegt – mehrere Teile auf einmal = Bonus!"
+	instructions = UI.ctrl("Tippe, wohin das Netz fliegt – mehrere Teile auf einmal = Bonus!", "Klicke, wohin das Netz fliegt – mehrere Teile auf einmal = Bonus!")
 	time_limit = 30.0
 
 

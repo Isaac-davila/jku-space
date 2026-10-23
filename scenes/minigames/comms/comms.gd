@@ -16,7 +16,8 @@ var strength := 0.0
 
 func _init() -> void:
 	title = "Funkverbindung"
-	instructions = "A/D oder Pfeiltasten – oder ziehen – Frequenz halten, bis die Verbindung steht"
+	instructions = UI.ctrl("Regler mit dem Finger ziehen – Frequenz halten, bis die Verbindung steht",
+		"A/D oder Pfeiltasten – oder ziehen – Frequenz halten, bis die Verbindung steht")
 	time_limit = 22.0
 
 

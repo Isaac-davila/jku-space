@@ -20,7 +20,7 @@ var lesson_t := 0.0
 
 func _init() -> void:
 	title = "Abwehrlaser"
-	instructions = "Tippe auf Trümmer, um sie zu zerstören!"
+	instructions = UI.ctrl("Tippe auf Trümmer, um sie zu zerstören!", "Klicke auf Trümmer, um sie zu zerstören!")
 	time_limit = 25.0
 
 

@@ -2,6 +2,16 @@ class_name UI
 ## Kleine Helfer, um Labels per Code zu bauen.
 
 
+## true auf Handys/Tablets → Texte sagen "Tippen" statt "Klicken / Leertaste".
+static func is_touch() -> bool:
+	return DisplayServer.is_touchscreen_available()
+
+
+## Wählt den passenden Steuerungstext für Touch oder Maus/Tastatur.
+static func ctrl(touch_text: String, desktop_text: String) -> String:
+	return touch_text if is_touch() else desktop_text
+
+
 static func make_label(text: String, size: int = 24, color: Color = Pal.TEXT) -> Label:
 	var l := Label.new()
 	l.text = text

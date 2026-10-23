@@ -46,7 +46,7 @@ func _ready() -> void:
 	add_child(_label)
 	_sub = UI.make_centered("", 18, Pal.DIM, Rect2(120, VIEW.y - 150, VIEW.x - 240, 60))
 	add_child(_sub)
-	_hint = UI.make_centered("Klicken oder Leertaste", 16, Pal.LINE, Rect2(0, VIEW.y - 60, VIEW.x, 30))
+	_hint = UI.make_centered(UI.ctrl("Tippen zum Fortfahren", "Klicken oder Leertaste"), 20, Pal.DIM, Rect2(0, VIEW.y - 60, VIEW.x, 30))
 	add_child(_hint)
 	for c in [_label, _sub, _hint]:
 		c.mouse_filter = Control.MOUSE_FILTER_IGNORE
