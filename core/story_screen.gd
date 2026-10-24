@@ -37,6 +37,8 @@ func on_end() -> void:
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
+	# WICHTIG: sonst "schluckt" dieses Control jeden Klick/Tipp und _unhandled_input bekommt ihn nie
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_bg = ColorRect.new()
 	_bg.color = Pal.BG
 	_bg.size = VIEW
